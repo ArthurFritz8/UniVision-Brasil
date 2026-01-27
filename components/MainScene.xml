@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="MainScene" extends="Scene">
+    <!-- Cena principal: Roteador/Controlador global -->
+    <script type="text/brightscript" uri="pkg:/components/MainScene.brs" />
+
+    <interface>
+        <!-- Estado global: controla qual tela está visível -->
+        <field id="estadoGlobal" type="string" value="Login" />
+    </interface>
+
+    <children>
+        <!-- Tela de Login simples (texto) -->
+        <Group id="LoginGroup" visible="true">
+            <LoginScreen id="LoginScreen" />
+        </Group>
+
+        <!-- Tela Home (Menu lateral + Grid de conteúdo) -->
+        <Group id="HomeGroup" visible="false">
+            <HomeScreen id="HomeScreen" />
+        </Group>
+
+        <!-- Tela Configurações -->
+        <Group id="SettingsGroup" visible="false">
+            <SettingsScreen id="SettingsScreen" />
+        </Group>
+
+        <!-- Tela Player (reprodução de vídeo) -->
+        <Group id="PlayerGroup" visible="false">
+            <VideoPlayer id="VideoPlayer" />
+        </Group>
+    </children>
+</component>

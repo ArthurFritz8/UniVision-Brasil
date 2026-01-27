@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="VideoPlayer" extends="Group">
+    <!-- Reprodutor com UI sobreposta -->
+    <script type="text/brightscript" uri="pkg:/components/screens/Player/VideoPlayer.brs" />
+
+    <interface>
+        <!-- Canal corrente (titulo/stream) -->
+        <field id="canal" type="assocarray" />
+    </interface>
+
+    <children>
+        <!-- Nó de vídeo padrão -->
+        <Video id="VideoNode" width="1920" height="1080" />
+
+        <!-- Overlay transparente para layout da UI -->
+        <Rectangle id="Overlay" width="1920" height="1080" color="#00000000" />
+
+        <!-- Spinner de carregamento -->
+        <BusySpinner id="Spinner" translation="[1820,40]" visible="false" />
+
+        <!-- UI de status -->
+        <Group id="UI" translation="[40,40]">
+            <Label id="TituloCanal" text="Canal" fontSize="32" />
+            <Label id="EstadoLabel" translation="[0,50]" text="Carregando..." fontSize="24" />
+            <Label id="ProgramaAtual" translation="[0,90]" text="" fontSize="22" />
+            <Label id="ErroLabel" translation="[0,100]" text="" color="#FF5555" fontSize="24" visible="false" />
+        </Group>
+    </children>
+</component>

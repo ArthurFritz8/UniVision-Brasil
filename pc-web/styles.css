@@ -1,0 +1,36 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #101214; color: #eaeaea; }
+#app { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
+#sidebar { background: #1f2126; padding: 24px; }
+#sidebar h1 { margin: 0 0 16px 0; font-size: 24px; }
+.menu-item { width: 100%; text-align: left; margin: 8px 0; padding: 12px; background: #2a2d34; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+.menu-item:hover { background: #3a3f48; }
+#main { padding: 24px; }
+#header { display: flex; align-items: center; justify-content: space-between; }
+#categoria-titulo { margin: 0; font-size: 28px; }
+#status { color: #9ecfff; font-size: 14px; }
+.poster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-top: 16px; }
+.card { background: #1c1f25; border-radius: 12px; overflow: hidden; cursor: pointer; transition: transform 120ms ease; display: flex; flex-direction: column; }
+.card:hover { transform: scale(1.03); }
+.card img { width: 100%; height: 240px; object-fit: cover; background: #2c2f36; }
+.card .title { padding: 12px; font-size: 16px; }
+.card .actions { display: flex; gap: 8px; padding: 12px; }
+.card .btn { flex: 1; padding: 8px 12px; border-radius: 8px; border: none; cursor: pointer; }
+.btn-play { background: #2f7cff; color: #fff; }
+.btn-fav { background: #ffd24f; color: #111; }
+
+#player-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); }
+#player-overlay.hidden { display: none; }
+.player-ui { background: #171a20; padding: 24px; border-radius: 12px; width: 80vw; max-width: 960px; }
+#player-title { margin-top: 0; }
+#player { width: 100%; height: 54vh; background: #000; }
+#player-state { margin: 8px 0 16px 0; color: #9ecfff; }
+#player-close { padding: 8px 12px; border-radius: 8px; border: none; }
+
+#settings-modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); }
+#settings-modal.hidden { display: none; }
+.settings-ui { background: #171a20; padding: 24px; border-radius: 12px; width: 640px; }
+.settings-ui h3 { margin-top: 0; }
+.settings-ui label { display: block; margin: 12px 0; }
+.settings-ui input { width: 100%; padding: 10px; border-radius: 8px; border: none; background: #232833; color: #fff; }
+.settings-ui .actions { display: flex; gap: 8px; margin-top: 12px; }

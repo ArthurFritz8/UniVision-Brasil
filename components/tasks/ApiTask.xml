@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="ApiTask" extends="Task">
+    <!-- Camada de rede: busca dados via roUrlTransfer (mock nesta versão) -->
+    <script type="text/brightscript" uri="pkg:/components/tasks/ApiTask.brs" />
+
+    <interface>
+        <!-- Endpoint alvo (não usado no mock, apenas ilustrativo) -->
+        <field id="endpoint" type="string" />
+        <field id="username" type="string" />
+        <field id="password" type="string" />
+        <!-- URL de playlist M3U completa (opcional) -->
+        <field id="m3uUrl" type="string" />
+        <!-- Resultado estruturado (assocarray) -->
+        <field id="resultado" type="assocarray" />
+            <field id="liveCategorias" type="array" />
+        <field id="erro" type="string" />
+    </interface>
+</component>

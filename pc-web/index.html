@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UniVision Brasil (Web)</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <h1>Menu</h1>
+      <nav>
+        <button class="menu-item" data-cat="ao_vivo">Ao Vivo</button>
+        <button class="menu-item" data-cat="filmes">Filmes</button>
+        <button class="menu-item" data-cat="minha_lista">Minha Lista</button>
+        <button class="menu-item" data-cat="config">Configurações</button>
+      </nav>
+    </aside>
+
+    <main id="main">
+      <div id="header">
+        <h2 id="categoria-titulo">Ao Vivo</h2>
+        <div id="status"></div>
+      </div>
+
+      <section id="grid" class="poster-grid"></section>
+    </main>
+  </div>
+
+  <div id="player-overlay" class="hidden">
+    <div class="player-ui">
+      <h3 id="player-title">Canal</h3>
+      <video id="player" controls></video>
+      <div id="player-state">Carregando...</div>
+      <button id="player-close">Voltar</button>
+    </div>
+  </div>
+
+  <div id="settings-modal" class="hidden">
+    <div class="settings-ui">
+      <h3>Configurações</h3>
+      <label>Servidor (Xtream Codes):<br>
+        <input id="endpoint" placeholder="http://host:porta" />
+      </label>
+      <label>Usuário:<br>
+        <input id="username" />
+      </label>
+      <label>Senha:<br>
+        <input id="password" type="password" />
+      </label>
+      <label>URL M3U:<br>
+        <input id="m3uUrl" placeholder="http://.../lista.m3u8" />
+      </label>
+      <div class="actions">
+        <button id="save-settings">Salvar</button>
+        <button id="close-settings">Fechar</button>
+      </div>
+      <small>Observação: Em navegadores, alguns servidores podem bloquear requisições por CORS. Se ocorrer, use um proxy local.</small>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

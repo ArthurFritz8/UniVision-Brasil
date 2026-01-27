@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="HomeScreen" extends="Group">
+    <!-- Tela inicial: Menu lateral (sidebar) + PosterGrid à direita -->
+    <script type="text/brightscript" uri="pkg:/components/screens/Home/HomeScreen.brs" />
+
+    <interface>
+        <!-- Evento para o MainScene iniciar o Player -->
+        <field id="reproduzirCanal" type="boolean" />
+        <!-- Canal selecionado (titulo/stream) -->
+        <field id="canalSelecionado" type="assocarray" />
+        <!-- Sinal para abrir tela de Configurações -->
+        <field id="abrirConfiguracoes" type="boolean" />
+        <!-- Estado do sidebar (colapsado/expandido) -->
+        <field id="sidebarColapsado" type="boolean" value="false" />
+    </interface>
+
+    <children>
+        <!-- Fundo geral -->
+        <Rectangle id="Fundo" width="1920" height="1080" color="#101214" />
+
+        <!-- Sidebar à esquerda (colapsável futuramente) -->
+        <Group id="Sidebar" translation="[0,0]">
+            <Rectangle id="SidebarBg" width="320" height="1080" color="#1f2126" />
+            <Label id="MenuTitulo" translation="[32, 48]" text="Menu" fontSize="32" />
+            <MarkupList id="Menu" translation="[32, 120]" itemSize="[256, 48]" itemSpacing="12" />
+        </Group>
+
+        <!-- Título da categoria atual -->
+        <Label id="CategoriaTitulo" translation="[360, 24]" text="Ao Vivo" fontSize="32" />
+        <Label id="EpgInfo" translation="[360, 56]" text="" fontSize="22" />
+        <Label id="FiltroTitulo" translation="[360, 84]" text="Filtros (Ao Vivo)" fontSize="20" />
+        <MarkupList id="FiltroList" translation="[360, 116]" itemSize="[320, 40]" itemSpacing="8" />
+        <TextEditBox id="BuscaInput" translation="[1040, 116]" width="520" height="40" hintText="Buscar..." />
+
+        <!-- Grid de pôsteres à direita -->
+        <PosterGrid id="Grid" translation="[360, 168]" numRows="3" numColumns="5" itemSpacing="[24, 24]" />
+    </children>
+</component>

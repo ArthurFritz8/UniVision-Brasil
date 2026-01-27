@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="LoginScreen" extends="Group">
+    <!-- Tela de Login: endpoint, usuário e senha -->
+    <script type="text/brightscript" uri="pkg:/components/screens/Login/LoginScreen.brs" />
+
+    <interface>
+        <field id="loginOk" type="boolean" />
+        <field id="loginErro" type="boolean" />
+        <field id="mensagem" type="string" />
+    </interface>
+
+    <children>
+        <Rectangle id="Bg" width="1920" height="1080" color="#0f0f10" />
+        <Label id="Titulo" translation="[540, 160]" text="UniVision Brasil" fontSize="42" />
+        <Label id="Sub" translation="[540, 210]" text="Insira suas credenciais IPTV (Xtream Codes)" fontSize="26" />
+
+        <Label id="EndpointLabel" translation="[540, 280]" text="Servidor (DNS/API):" fontSize="24" />
+        <TextEditBox id="Endpoint" translation="[540, 320]" width="840" height="48" hintText="http://host:porta" />
+
+        <Label id="UsuarioLabel" translation="[540, 390]" text="Usuário:" fontSize="24" />
+        <TextEditBox id="Usuario" translation="[540, 430]" width="480" height="48" />
+
+        <Label id="SenhaLabel" translation="[540, 500]" text="Senha:" fontSize="24" />
+        <TextEditBox id="Senha" translation="[540, 540]" width="480" height="48" secureTextEntry="true" />
+
+        <Label id="Hint" translation="[540, 620]" text="Pressione OK para entrar. Back para ignorar login." fontSize="22" />
+        <Label id="Mensagem" translation="[540, 670]" text="" fontSize="22" color="#FF6666" />
+    </children>
+</component>

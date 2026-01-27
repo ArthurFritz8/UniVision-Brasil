@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="EpgTask" extends="Task">
+    <!-- Task para carregar EPG (programação) de canais ao vivo -->
+    <script type="text/brightscript" uri="pkg:/components/tasks/EpgTask.brs" />
+
+    <interface>
+        <field id="endpoint" type="string" />
+        <field id="username" type="string" />
+        <field id="password" type="string" />
+        <field id="streamId" type="string" />
+        <field id="resultado" type="assocarray" />
+        <field id="erro" type="string" />
+    </interface>
+</component>
