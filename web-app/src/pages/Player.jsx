@@ -49,9 +49,14 @@ export default function Player() {
           setLoading(false);
           return;
         }
-        
+
+        const isHlsUrl = /\.m3u8(\?|$)/i.test(url) || /\.m3u(\?|$)/i.test(url);
+
         // Usar proxy para fazer streaming (proxy segue redirects e adiciona CORS)
-        const proxyStreamUrl = `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(url)}`;
+        // Para HLS, usar /hls para reescrever playlist e proxiar segmentos/keys.
+        const proxyStreamUrl = isHlsUrl
+          ? `${IPTV_PROXY_BASE_URL}/hls?url=${encodeURIComponent(url)}`
+          : `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(url)}`;
         console.log('🔗 Stream URL original:', url);
         console.log('🎬 Stream via proxy:', proxyStreamUrl);
         
@@ -74,17 +79,44 @@ export default function Player() {
     if (!video) return;
 
     console.log('🎬 Carregando stream:', streamUrl);
-    
+
+    const isHlsStream = streamUrl.includes('/hls?') || /\.m3u8(\?|$)/i.test(streamUrl) || /\.m3u(\?|$)/i.test(streamUrl);
+
+    // Limpar src anterior
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+
     // Usar tag nativa com crossOrigin
     video.crossOrigin = 'anonymous';
-    video.src = streamUrl;
+
+    let hls;
+    if (isHlsStream) {
+      // Safari (e alguns ambientes) suportam HLS nativo
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = streamUrl;
+      } else if (Hls.isSupported()) {
+        hls = new Hls({
+          lowLatencyMode: true,
+          enableWorker: true,
+        });
+        hls.loadSource(streamUrl);
+        hls.attachMedia(video);
+      } else {
+        setError('Seu navegador não suporta HLS');
+        setLoading(false);
+        return;
+      }
+    } else {
+      video.src = streamUrl;
+    }
     
     video.addEventListener('play', () => {
       console.log('▶️ Vídeo iniciando reprodução');
       setLoading(false);
     }, { once: true });
     
-    video.addEventListener('error', (e) => {
+    const onError = (e) => {
       console.error('❌ Erro na tag video:', {
         code: video.error?.code,
         message: video.error?.message,
@@ -92,7 +124,9 @@ export default function Player() {
       });
       setError(`Erro ao carregar vídeo (Código: ${video.error?.code})`);
       setLoading(false);
-    });
+    };
+
+    video.addEventListener('error', onError);
     
     video.addEventListener('loadstart', () => {
       console.log('⏳ Iniciando carregamento do stream');
@@ -103,6 +137,16 @@ export default function Player() {
       setLoading(false);
     });
     
+    return () => {
+      video.removeEventListener('error', onError);
+      if (hls) {
+        try {
+          hls.destroy();
+        } catch {
+          // ignore
+        }
+      }
+    };
   }, [streamUrl]);
 
   return (

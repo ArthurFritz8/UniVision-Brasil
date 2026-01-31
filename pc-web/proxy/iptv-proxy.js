@@ -41,6 +41,113 @@ const getHeaders = () => ({
   'X-Requested-With': 'XMLHttpRequest',
 });
 
+const getProxyBaseUrl = (req) => {
+  const host = req.get('host');
+  const proto = req.protocol || 'http';
+  return `${proto}://${host}`;
+};
+
+const isLikelyM3u8 = (url) => {
+  try {
+    const u = new URL(url);
+    return u.pathname.endsWith('.m3u8') || u.pathname.endsWith('.m3u');
+  } catch {
+    return false;
+  }
+};
+
+const rewriteM3u8 = ({ playlistText, playlistUrl, proxyBaseUrl }) => {
+  const base = new URL(playlistUrl);
+
+  const rewriteUri = (rawUri) => {
+    const resolved = new URL(rawUri, base).toString();
+    const proxied = isLikelyM3u8(resolved)
+      ? `${proxyBaseUrl}/hls?url=${encodeURIComponent(resolved)}`
+      : `${proxyBaseUrl}/stream?url=${encodeURIComponent(resolved)}`;
+    return proxied;
+  };
+
+  return playlistText
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return line;
+
+      // Rewrite EXT-X-KEY URIs
+      if (trimmed.startsWith('#EXT-X-KEY') && trimmed.includes('URI="')) {
+        return line.replace(/URI="([^"]+)"/g, (_m, uri) => `URI="${rewriteUri(uri)}"`);
+      }
+
+      // Comments/directives stay as-is
+      if (trimmed.startsWith('#')) return line;
+
+      // Media segment / nested playlist
+      return rewriteUri(trimmed);
+    })
+    .join('\n');
+};
+
+// Proxy para HLS playlists (.m3u8) com reescrita de URLs (segmentos, sub-playlists, keys)
+app.get('/hls', async (req, res) => {
+  try {
+    const playlistUrl = req.query.url;
+
+    if (!playlistUrl) {
+      return res.status(400).json({ error: 'URL não fornecida' });
+    }
+
+    console.log('📺 HLS playlist:', playlistUrl);
+
+    const response = await axios.get(playlistUrl, {
+      headers: {
+        ...getHeaders(),
+        Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
+      },
+      timeout: 60000,
+      maxRedirects: 5,
+      responseType: 'text',
+      transformResponse: (r) => r,
+      validateStatus: () => true,
+    });
+
+    if (response.status >= 400) {
+      console.error('❌ Erro ao buscar playlist HLS:', response.status);
+      return res.status(response.status).send(response.data || 'Erro ao buscar playlist');
+    }
+
+    // URL final após redirects (quando disponível)
+    const finalUrl =
+      response?.request?.res?.responseUrl ||
+      response?.request?._redirectable?._currentUrl ||
+      playlistUrl;
+
+    const proxyBaseUrl = getProxyBaseUrl(req);
+    const rewritten = rewriteM3u8({
+      playlistText: typeof response.data === 'string' ? response.data : String(response.data ?? ''),
+      playlistUrl: finalUrl,
+      proxyBaseUrl,
+    });
+
+    res.status(200);
+    res.set('Content-Type', 'application/vnd.apple.mpegurl');
+    res.set('Cache-Control', 'no-store');
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Range');
+    res.send(rewritten);
+  } catch (error) {
+    console.error('❌ Erro no proxy HLS:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.options('/hls', (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, Range');
+  res.status(204).end();
+});
+
 // Proxy para vídeos (streaming)
 app.get('/stream', async (req, res) => {
   try {
@@ -188,4 +295,5 @@ app.listen(PORT, () => {
   console.log(`🚀 Proxy IPTV rodando em http://localhost:${PORT}`);
   console.log(`📡 API: http://localhost:${PORT}/iptv?url=SUA_URL_API`);
   console.log(`🎬 Stream: http://localhost:${PORT}/stream?url=SUA_URL_VIDEO`);
+  console.log(`📺 HLS: http://localhost:${PORT}/hls?url=SUA_URL_M3U8`);
 });
