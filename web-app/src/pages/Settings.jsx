@@ -1,0 +1,227 @@
+import { Moon, Sun, Wifi, Save, Trash2, TestTube } from 'lucide-react';
+import { useState } from 'react';
+import useAppStore from '@store/appStore';
+import useIptvStore from '@store/iptvStore';
+import toast from 'react-hot-toast';
+import { IPTV_PROXY_BASE_URL } from '@services/api';
+
+export default function Settings() {
+  const { theme, toggleTheme, playerSettings, setPlayerSettings } = useAppStore();
+  const { credentials, setCredentials, clearCredentials } = useIptvStore();
+  const [formData, setFormData] = useState(credentials);
+  const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  const handleSaveCredentials = () => {
+    setCredentials(formData);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
+  };
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    try {
+      const stored = localStorage.getItem('iptv-credentials');
+      console.log('📦 localStorage raw:', stored);
+      
+      if (!stored) {
+        toast.error('Nenhuma credencial salva!');
+        return;
+      }
+
+      const data = JSON.parse(stored);
+      const creds = data?.state?.credentials;
+      
+      if (!creds?.username || !creds?.password || !creds?.apiUrl) {
+        toast.error('Credenciais incompletas!');
+        return;
+      }
+
+      // Construir URL
+      let baseUrl = creds.apiUrl;
+      if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+        baseUrl = 'http://' + baseUrl;
+      }
+      if (!baseUrl.endsWith('/')) {
+        baseUrl += '/';
+      }
+      
+      const fullUrl = `${baseUrl}player_api.php?username=${creds.username}&password=${creds.password}&action=get_live_streams`;
+      
+      // USAR PROXY
+      const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(fullUrl)}`;
+      
+      console.log('🔗 URL via proxy:', proxyUrl);
+      toast('Testando via proxy...', { icon: '🔄' });
+      
+      const response = await fetch(proxyUrl);
+      console.log('📡 Resposta:', response.status);
+      
+      if (response.ok) {
+        const jsonData = await response.json();
+        console.log('✅ Dados:', jsonData);
+        const count = Array.isArray(jsonData) ? jsonData.length : 0;
+        toast.success(`✅ Conexão OK! ${count} canais encontrados`);
+      } else {
+        const errorText = await response.text();
+        console.error('❌ Erro:', errorText);
+        toast.error(`Erro: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('❌ Erro:', error);
+      toast.error(`Falha: ${error.message}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleClearCredentials = () => {
+    clearCredentials();
+    setFormData({ username: '', password: '', apiUrl: '', m3uUrl: '' });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
+  };
+
+  const handleInputChange = (field, value) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const bgClass = theme === 'dark' ? 'bg-dark-950' : 'bg-gray-50';
+  const cardClass = theme === 'dark' ? 'bg-dark-900 border-dark-700' : 'bg-white border-gray-200';
+  const textClass = theme === 'dark' ? 'text-white' : 'text-gray-900';
+  const mutedClass = theme === 'dark' ? 'text-gray-400' : 'text-gray-600';
+
+  return (
+    <div className={`min-h-screen ${bgClass} transition-colors duration-300`}>
+      <div className="container mx-auto px-4 py-12 max-w-5xl">
+        
+        {/* Header */}
+        <div className="mb-12">
+          <h1 className={`text-5xl font-bold mb-2 ${textClass}`}>⚙️ Configurações</h1>
+          <p className={`text-lg ${mutedClass}`}>Personalize sua experiência</p>
+        </div>
+
+        {/* Success Message */}
+        {saved && (
+          <div className={`mb-8 p-4 rounded-lg border-l-4 ${theme === 'dark' ? 'bg-green-900/20 border-green-500 text-green-400' : 'bg-green-50 border-green-500 text-green-700'}`}>
+            <p className="font-semibold">✓ Configurações salvas com sucesso!</p>
+          </div>
+        )}
+
+        <div className="space-y-8">
+          
+          {/* Aparência */}
+          <section className={`rounded-2xl p-8 border-2 ${cardClass}`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className={`p-3 rounded-lg ${theme === 'dark' ? 'bg-primary-600/20' : 'bg-primary-100'}`}>
+                  {theme === 'dark' ? <Moon size={28} className="text-primary-400" /> : <Sun size={28} className="text-primary-600" />}
+                </div>
+                <div>
+                  <h2 className={`text-2xl font-bold ${textClass}`}>Aparência</h2>
+                  <p className={`text-sm ${mutedClass}`}>Tema {theme === 'dark' ? 'Escuro' : 'Claro'}</p>
+                </div>
+              </div>
+              <button onClick={toggleTheme} className="btn-primary px-8 py-3 text-base font-semibold hover:scale-105 transition-transform">
+                Alternar
+              </button>
+            </div>
+          </section>
+
+          {/* IPTV Credenciais */}
+          <section className={`rounded-2xl p-8 border-2 ${cardClass}`}>
+            <div className="flex items-center gap-4 mb-8">
+              <div className={`p-3 rounded-lg ${theme === 'dark' ? 'bg-primary-600/20' : 'bg-primary-100'}`}>
+                <Wifi size={28} className="text-primary-500" />
+              </div>
+              <div>
+                <h2 className={`text-2xl font-bold ${textClass}`}>Credenciais IPTV</h2>
+                <p className={`text-sm ${mutedClass}`}>Configure suas credenciais</p>
+              </div>
+            </div>
+
+            <div className={`p-6 rounded-xl ${theme === 'dark' ? 'bg-dark-950/50' : 'bg-gray-50'} grid grid-cols-1 md:grid-cols-2 gap-6`}>
+              
+              <div>
+                <label className={`block text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>👤 Usuário</label>
+                <input type="text" placeholder="seu.email@exemplo.com" value={formData.username} onChange={(e) => handleInputChange('username', e.target.value)} className="input-field" />
+              </div>
+
+              <div>
+                <label className={`block text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>🔐 Senha</label>
+                <input type="password" placeholder="sua senha" value={formData.password} onChange={(e) => handleInputChange('password', e.target.value)} className="input-field" />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className={`block text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>🌐 URL da API</label>
+                <input type="text" placeholder="https://api.seuprovedor.com" value={formData.apiUrl} onChange={(e) => handleInputChange('apiUrl', e.target.value)} className="input-field" />
+                <p className={`text-xs mt-2 ${mutedClass}`}>Ex: https://tvonline.com/api</p>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className={`block text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>📺 URL M3U</label>
+                <input type="text" placeholder="https://seu-servidor.com/lista.m3u" value={formData.m3uUrl} onChange={(e) => handleInputChange('m3uUrl', e.target.value)} className="input-field" />
+                <p className={`text-xs mt-2 ${mutedClass}`}>Lista de canais em formato M3U</p>
+              </div>
+
+            </div>
+
+            <div className={`flex gap-3 mt-8 pt-6 border-t ${theme === 'dark' ? 'border-dark-700/50' : 'border-gray-300/50'}`}>
+              <button onClick={handleSaveCredentials} className="flex-1 btn-primary py-3 font-semibold rounded-lg hover:scale-105 transition-transform flex items-center justify-center gap-2">
+                <Save size={20} /> Salvar
+              </button>
+              <button onClick={handleTestConnection} disabled={testing} className="btn-secondary px-6 py-3 rounded-lg flex items-center justify-center gap-2 hover:opacity-80 transition-opacity disabled:opacity-50">
+                <TestTube size={20} /> {testing ? 'Testando...' : 'Testar'}
+              </button>
+              {(formData.username || formData.password || formData.apiUrl || formData.m3uUrl) && (
+                <button onClick={handleClearCredentials} className="btn-secondary px-6 py-3 rounded-lg flex items-center justify-center gap-2 hover:opacity-80 transition-opacity">
+                  <Trash2 size={20} />
+                </button>
+              )}
+            </div>
+          </section>
+
+          {/* Player */}
+          <section className={`rounded-2xl p-8 border-2 ${cardClass}`}>
+            <div className="flex items-center gap-4 mb-8">
+              <div className={`p-3 rounded-lg ${theme === 'dark' ? 'bg-primary-600/20' : 'bg-primary-100'}`}>
+                <span className="text-3xl">🎬</span>
+              </div>
+              <div>
+                <h2 className={`text-2xl font-bold ${textClass}`}>Player de Vídeo</h2>
+                <p className={`text-sm ${mutedClass}`}>Configure o player</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              
+              <div className={`flex items-center justify-between p-5 rounded-lg border-2 ${cardClass}`}>
+                <div>
+                  <p className={`font-semibold text-lg ${textClass}`}>▶️ Autoplay</p>
+                  <p className={`text-sm ${mutedClass}`}>Reproduzir automaticamente</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" checked={playerSettings.autoplay} onChange={(e) => setPlayerSettings({ autoplay: e.target.checked })} className="sr-only peer" />
+                  <div className={`w-12 h-7 rounded-full peer transition-all ${playerSettings.autoplay ? 'bg-primary-600' : theme === 'dark' ? 'bg-dark-700' : 'bg-gray-300'} peer-checked:after:translate-x-6 after:content-[''] after:absolute after:top-1 after:left-1 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`}></div>
+                </label>
+              </div>
+
+              <div className={`flex items-center justify-between p-5 rounded-lg border-2 ${cardClass}`}>
+                <div>
+                  <p className={`font-semibold text-lg ${textClass}`}>📝 Legendas</p>
+                  <p className={`text-sm ${mutedClass}`}>Ativar legendas</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" checked={playerSettings.subtitles} onChange={(e) => setPlayerSettings({ subtitles: e.target.checked })} className="sr-only peer" />
+                  <div className={`w-12 h-7 rounded-full peer transition-all ${playerSettings.subtitles ? 'bg-primary-600' : theme === 'dark' ? 'bg-dark-700' : 'bg-gray-300'} peer-checked:after:translate-x-6 after:content-[''] after:absolute after:top-1 after:left-1 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all`}></div>
+                </label>
+              </div>
+
+            </div>
+          </section>
+
+        </div>
+      </div>
+    </div>
+  );
+}

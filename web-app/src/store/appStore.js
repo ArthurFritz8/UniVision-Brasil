@@ -1,0 +1,93 @@
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+const useAppStore = create(
+  persist(
+    (set) => ({
+      // Theme
+      theme: 'dark',
+      setTheme: (theme) => set({ theme }),
+      toggleTheme: () => set((state) => ({
+        theme: state.theme === 'dark' ? 'light' : 'dark'
+      })),
+      
+      // Sidebar
+      sidebarCollapsed: window.innerWidth < 768,
+      toggleSidebar: () => set((state) => ({
+        sidebarCollapsed: !state.sidebarCollapsed
+      })),
+      
+      // Active category (para manter categoria selecionada ao navegar)
+      activeCategory: null,
+      setActiveCategory: (categoryId) => set({ activeCategory: categoryId }),
+      
+      // Cache de categorias para evitar recarregamentos
+      categoriesCache: {
+        live: null,
+        vod: null,
+        series: null,
+        lastUpdate: null,
+      },
+      updateCategoriesCache: (type, categories) => set((state) => ({
+        categoriesCache: {
+          ...state.categoriesCache,
+          [type]: categories,
+          lastUpdate: Date.now(),
+        }
+      })),
+      
+      // Player settings
+      playerSettings: {
+        autoplay: true,
+        quality: 'auto',
+        volume: 1,
+        muted: false,
+        subtitles: true,
+      },
+      setPlayerSettings: (settings) => set((state) => ({
+        playerSettings: { ...state.playerSettings, ...settings }
+      })),
+      
+      // Search history
+      searchHistory: [],
+      addSearchTerm: (term) => set((state) => ({
+        searchHistory: [term, ...state.searchHistory.filter(t => t !== term)].slice(0, 10)
+      })),
+      clearSearchHistory: () => set({ searchHistory: [] }),
+      
+      // Recently viewed
+      recentlyViewed: [],
+      addRecentlyViewed: (item) => set((state) => {
+        const filtered = state.recentlyViewed.filter(i => i._id !== item._id);
+        return {
+          recentlyViewed: [item, ...filtered].slice(0, 20)
+        };
+      }),
+      clearRecentlyViewed: () => set({ recentlyViewed: [] }),
+      
+      // Continue watching
+      continueWatching: [],
+      updateContinueWatching: (items) => set({ continueWatching: items }),
+      
+      // Active category
+      activeCategory: null,
+      setActiveCategory: (category) => set({ activeCategory: category }),
+      
+      // Loading states
+      isLoading: false,
+      setLoading: (isLoading) => set({ isLoading }),
+    }),
+    {
+      name: 'app-storage',
+      partialize: (state) => ({
+        theme: state.theme,
+        sidebarCollapsed: state.sidebarCollapsed,
+        playerSettings: state.playerSettings,
+        searchHistory: state.searchHistory,
+        recentlyViewed: state.recentlyViewed,
+      }),
+    }
+  )
+);
+
+export default useAppStore;

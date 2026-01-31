@@ -1,0 +1,40 @@
+{
+  "name": "univision-brasil-web",
+  "version": "2.0.0",
+  "description": "Frontend web profissional para UniVision Brasil IPTV",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext .js,.jsx",
+    "lint:fix": "eslint src --ext .js,.jsx --fix",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "format": "prettier --write \"src/**/*.{js,jsx,css,html}\""
+  },
+  "dependencies": {
+    "axios": "^1.6.5",
+    "clsx": "^2.1.0",
+    "dayjs": "^1.11.10",
+    "hls.js": "^1.4.14",
+    "lucide-react": "^0.303.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-hot-toast": "^2.4.1",
+    "react-router-dom": "^6.21.1",
+    "zustand": "^4.4.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "@vitest/ui": "^1.1.1",
+    "autoprefixer": "^10.4.23",
+    "eslint": "^8.56.0",
+    "postcss": "^8.5.6",
+    "prettier": "^3.1.1",
+    "tailwindcss": "^3.4.19",
+    "vite": "^5.0.11",
+    "vite-plugin-pwa": "^0.17.4",
+    "vitest": "^1.1.1"
+  }
+}

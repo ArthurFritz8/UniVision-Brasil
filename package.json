@@ -1,0 +1,36 @@
+{
+  "name": "univision-brasil-monorepo",
+  "version": "2.0.0",
+  "private": true,
+  "description": "UniVision Brasil - Plataforma IPTV/VOD Profissional",
+  "scripts": {
+    "install:all": "npm install && cd backend && npm install && cd ../web-app && npm install && cd ../pc-web/proxy && npm install",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:web": "cd web-app && npm run dev",
+    "dev:proxy": "cd pc-web/proxy && npm start",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:web\"",
+    "dev:all": "concurrently \"npm run dev:proxy\" \"npm run dev:web\"",
+    "build:backend": "cd backend && npm install --production",
+    "build:web": "cd web-app && npm run build",
+    "build": "npm run build:backend && npm run build:web",
+    "test:backend": "cd backend && npm test",
+    "test:web": "cd web-app && npm test",
+    "test": "npm run test:backend && npm run test:web",
+    "lint:backend": "cd backend && npm run lint",
+    "lint:web": "cd web-app && npm run lint",
+    "lint": "npm run lint:backend && npm run lint:web",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "docker:restart": "docker-compose restart",
+    "clean": "rm -rf node_modules backend/node_modules web-app/node_modules pc-web/proxy/node_modules backend/dist web-app/dist"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

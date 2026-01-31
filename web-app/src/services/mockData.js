@@ -1,0 +1,1 @@
+export const mockChannels = []; export const mockMovies = []; export const mockSeries = []; export const mockCategories = []; export const mockUser = { _id: '1', name: 'Usuário Demo', email: 'demo@example.com', role: 'user', avatar: 'https://i.pravatar.cc/150?img=1' };
