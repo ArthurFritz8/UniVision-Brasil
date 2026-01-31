@@ -15,6 +15,9 @@ Thumbs.db
 .dist/
 build/
 dist/
+
+# Vite cache
+**/.vite/
 # Temporary
 .tmp/
 .temp/
