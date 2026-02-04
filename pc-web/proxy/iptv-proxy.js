@@ -42,9 +42,15 @@ const upstream = axios.create({
   decompress: true,
 });
 
+// NOTE: cannot call log() here (it is defined below). Keep a minimal startup warning.
 if (ALLOW_INSECURE_TLS) {
-  log('warn', 'tls.insecure_enabled', {
-    note: 'ALLOW_INSECURE_TLS=true (cert validation disabled for upstream HTTPS requests)',
+  console.warn('[IPTV-PROXY]', {
+    ts: new Date().toISOString(),
+    level: 'warn',
+    msg: 'tls.insecure_enabled',
+    meta: {
+      note: 'ALLOW_INSECURE_TLS=true (cert validation disabled for upstream HTTPS requests)',
+    },
   });
 }
 
