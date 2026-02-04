@@ -17,6 +17,10 @@ dns.setDefaultResultOrder('ipv4first');
 const app = express();
 const PORT = Number(process.env.PORT || 3101);
 
+// Some IPTV providers use invalid/self-signed TLS certificates.
+// Keep this OFF by default; enable only if you trust your provider.
+const ALLOW_INSECURE_TLS = String(process.env.ALLOW_INSECURE_TLS || '').toLowerCase() === 'true';
+
 app.disable('x-powered-by');
 // When hosted behind a reverse proxy (Render), honor x-forwarded-* headers
 // so req.protocol is https when the public URL is https.
@@ -25,6 +29,9 @@ app.set('trust proxy', true);
 // Reutiliza conexões TCP (melhora latência e reduz overhead)
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 256 });
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 256 });
+const insecureHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 256, rejectUnauthorized: false });
+
+const getHttpsAgent = () => (ALLOW_INSECURE_TLS ? insecureHttpsAgent : httpsAgent);
 
 const upstream = axios.create({
   httpAgent,
@@ -34,6 +41,12 @@ const upstream = axios.create({
   validateStatus: () => true,
   decompress: true,
 });
+
+if (ALLOW_INSECURE_TLS) {
+  log('warn', 'tls.insecure_enabled', {
+    note: 'ALLOW_INSECURE_TLS=true (cert validation disabled for upstream HTTPS requests)',
+  });
+}
 
 const LEVELS = {
   silent: 0,
@@ -310,6 +323,7 @@ app.get('/img', async (req, res) => {
         ...getHeaders(),
         Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
       },
+      httpsAgent: getHttpsAgent(),
       responseType: 'stream',
       timeout: 30000,
     });
@@ -442,6 +456,7 @@ app.get('/hls', async (req, res) => {
           ...getHeaders(),
           Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
         },
+        httpsAgent: getHttpsAgent(),
         responseType: 'arraybuffer',
       });
 
@@ -757,6 +772,7 @@ app.get('/stream', async (req, res) => {
     const fetchOnce = (url) =>
       upstream.get(url, {
         headers,
+        httpsAgent: getHttpsAgent(),
         responseType: 'stream',
         // Streaming can last minutes/hours; don't use a global timeout here.
         timeout: 0,
@@ -930,6 +946,7 @@ app.get('/iptv', async (req, res) => {
       upstream.get(url, {
         headers: getHeaders(),
         family: 4, // Força IPv4
+        httpsAgent: getHttpsAgent(),
         responseType: 'arraybuffer',
       });
 
