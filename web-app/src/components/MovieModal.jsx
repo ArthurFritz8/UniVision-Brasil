@@ -15,12 +15,23 @@ export default function MovieModal({ movie, onClose }) {
 
   const mergedMovie = useMemo(() => {
     if (!details) return movie;
+    const base = movie && typeof movie === 'object' ? movie : {};
+    const extra = details && typeof details === 'object' ? details : {};
+
     return {
-      ...movie,
-      ...details,
+      ...base,
+      ...extra,
+      // Prefer existing card fields when details omit them
+      title: extra.title || base.title,
+      poster: extra.poster || base.poster,
+      streamUrl: extra.streamUrl || base.streamUrl,
+      year: extra.year || base.year,
+      duration: extra.duration || base.duration,
+      rating: extra.rating || base.rating,
+      category: extra.category || base.category,
       metadata: {
-        ...(movie?.metadata || {}),
-        ...(details?.metadata || {}),
+        ...(base?.metadata || {}),
+        ...(extra?.metadata || {}),
       },
     };
   }, [movie, details]);
@@ -29,10 +40,10 @@ export default function MovieModal({ movie, onClose }) {
   const hasLongDescription = description.length > 180;
 
   const yearLabel = useMemo(() => {
-    const y = movie?.year;
+    const y = mergedMovie?.year;
     if (!y) return null;
     return String(y);
-  }, [movie?.year]);
+  }, [mergedMovie?.year]);
 
   useEffect(() => {
     const onKeyDown = (e) => {

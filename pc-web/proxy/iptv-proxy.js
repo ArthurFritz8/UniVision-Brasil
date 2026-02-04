@@ -638,12 +638,70 @@ app.get('/stream', async (req, res) => {
       ...(range ? { Range: range } : {}),
     };
 
-    // Streaming can last minutes/hours; don't use a global 60s axios timeout here.
-    const response = await upstream.get(videoUrl, {
-      headers,
-      responseType: 'stream',
-      timeout: 0,
-    });
+    const buildCandidateUrls = (rawUrl) => {
+      try {
+        const u = new URL(String(rawUrl));
+        const urls = [u.toString()];
+
+        if (u.protocol === 'http:') {
+          const httpsUrl = new URL(u.toString());
+          httpsUrl.protocol = 'https:';
+          urls.push(httpsUrl.toString());
+        } else if (u.protocol === 'https:') {
+          const httpUrl = new URL(u.toString());
+          httpUrl.protocol = 'http:';
+          urls.push(httpUrl.toString());
+        }
+
+        return urls;
+      } catch {
+        return [String(rawUrl)];
+      }
+    };
+
+    const fetchOnce = (url) =>
+      upstream.get(url, {
+        headers,
+        responseType: 'stream',
+        // Streaming can last minutes/hours; don't use a global timeout here.
+        timeout: 0,
+      });
+
+    const candidates = buildCandidateUrls(videoUrl);
+    let response = null;
+    let lastError = null;
+
+    for (let i = 0; i < candidates.length; i++) {
+      const candidateUrl = candidates[i];
+      try {
+        if (i > 0) {
+          log('warn', 'stream.retry_candidate', { requestId: req.id, from: videoUrl, to: candidateUrl });
+        }
+
+        const r = await fetchOnce(candidateUrl);
+        response = r;
+
+        if (r.status < 400) break;
+
+        const retryableStatus = r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
+        if (!retryableStatus || i === candidates.length - 1) break;
+
+        // Discard upstream body before retrying
+        try {
+          r.data?.destroy?.();
+        } catch {
+          // ignore
+        }
+      } catch (err) {
+        lastError = err;
+        const networkish = isUpstreamNetworkError(err);
+        if (!networkish || i === candidates.length - 1) throw err;
+      }
+    }
+
+    if (!response) {
+      throw lastError || new Error('No upstream response');
+    }
 
     log('debug', 'stream.upstream_status', { requestId: req.id, status: response.status, range: range || null });
 
