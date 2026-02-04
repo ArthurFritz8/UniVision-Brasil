@@ -1,7 +1,8 @@
 import { useNavigate } from 'react-router-dom';
-import { Play, Star, Clock } from 'lucide-react';
+import { Play, Star, Clock, Heart } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import useAuthStore from '@store/authStore';
+import useFavoritesStore from '@store/favoritesStore';
 import SeriesModal from './SeriesModal';
 import MovieModal from './MovieModal';
 import { logger } from '@/utils/logger';
@@ -9,9 +10,21 @@ import { logger } from '@/utils/logger';
 export default function ContentGrid({ items, type, emptyMessage }) {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuthStore();
+  const { isFavorite, toggle } = useFavoritesStore();
   const [imageErrors, setImageErrors] = useState({});
   const [selectedSeries, setSelectedSeries] = useState(null);
   const [selectedMovie, setSelectedMovie] = useState(null);
+
+  const getItemKind = (item) => {
+    const inferred =
+      type === 'mixed'
+        ? String(item?.type || '').toLowerCase()
+        : String(type || '').toLowerCase();
+
+    if (inferred === 'content') return 'movie';
+    if (inferred === 'channel') return 'live';
+    return inferred || 'movie';
+  };
 
   const PAGE_SIZE = 48;
   const [visibleCount, setVisibleCount] = useState(() => {
@@ -164,6 +177,11 @@ export default function ContentGrid({ items, type, emptyMessage }) {
   return (
     <div className="grid-responsive">
       {visibleItems.map((item) => (
+        (() => {
+          const itemKind = getItemKind(item);
+          const fav = isFavorite?.(item?._id, itemKind);
+
+          return (
         <div
           key={item._id}
           className="group relative bg-dark-900 rounded-lg overflow-hidden card-hover cursor-pointer"
@@ -221,6 +239,25 @@ export default function ContentGrid({ items, type, emptyMessage }) {
                 </button>
               </div>
             </div>
+
+            {/* Favorite button */}
+            {isAuthenticated && (
+              <button
+                type="button"
+                aria-label={fav ? 'Remover dos favoritos' : 'Salvar nos favoritos'}
+                title={fav ? 'Remover dos favoritos' : 'Salvar nos favoritos'}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggle?.({ ...item, type: itemKind });
+                }}
+                className={
+                  'absolute bottom-3 right-3 p-2 rounded-lg backdrop-blur bg-black/45 hover:bg-black/60 transition '
+                  + (fav ? 'text-red-500' : 'text-gray-200')
+                }
+              >
+                <Heart size={18} className={fav ? 'fill-red-500' : ''} />
+              </button>
+            )}
 
             {/* Premium badge */}
             {item.isPremium && (
@@ -282,6 +319,8 @@ export default function ContentGrid({ items, type, emptyMessage }) {
             )}
           </div>
         </div>
+          );
+        })()
       ))}
 
       {hasMore && (

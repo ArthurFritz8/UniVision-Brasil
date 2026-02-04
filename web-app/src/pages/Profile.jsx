@@ -1,17 +1,33 @@
-import { User, Mail, Calendar, Shield, Edit2, Save, X } from 'lucide-react';
-import { useState } from 'react';
+import { User, Mail, Calendar, Shield, Edit2, Save, X, Heart, Tv } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import useAuthStore from '@store/authStore';
+import useFavoritesStore from '@store/favoritesStore';
+import useIptvStore from '@store/iptvStore';
 import toast from 'react-hot-toast';
 import { logger } from '@/utils/logger';
 
 export default function Profile() {
   const { user, updateProfile } = useAuthStore();
+  const favoritesCount = useFavoritesStore((s) => Object.keys(s?.favoritesByKey || {}).length);
+  const credentials = useIptvStore((s) => s.credentials);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState({
     name: user?.name || '',
     email: user?.email || ''
   });
+
+  const planLabel = useMemo(() => {
+    const role = String(user?.role || '').toLowerCase();
+    if (!role) return 'User';
+    if (role === 'admin') return 'Admin';
+    if (role === 'premium') return 'Premium';
+    return role.charAt(0).toUpperCase() + role.slice(1);
+  }, [user?.role]);
+
+  const isIptvConfigured = Boolean(
+    credentials?.username && credentials?.password && (credentials?.apiUrl || credentials?.m3uUrl)
+  );
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -63,12 +79,16 @@ export default function Profile() {
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-4xl font-bold">Meu Perfil</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+        <div>
+          <h1 className="text-4xl font-bold">Meu Perfil</h1>
+          <p className="text-gray-400 mt-1">Gerencie seus dados e preferências</p>
+        </div>
+
         {!isEditing && (
           <button
             onClick={() => setIsEditing(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded-lg transition"
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded-lg transition"
           >
             <Edit2 size={18} />
             Editar
@@ -133,25 +153,43 @@ export default function Profile() {
             </div>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-6">
-            <div className="flex items-center gap-3 p-4 bg-dark-800 rounded-lg hover:bg-dark-700 transition">
-              <Mail className="text-primary-500" size={24} />
-              <div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="flex items-center gap-3 p-4 bg-dark-800 rounded-lg hover:bg-dark-700 transition min-h-[88px]">
+              <Mail className="text-primary-500" size={22} />
+              <div className="min-w-0">
                 <p className="text-sm text-gray-400">Email</p>
-                <p className="font-medium break-all">{user?.email}</p>
+                <p className="font-medium break-all truncate">{user?.email}</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 p-4 bg-dark-800 rounded-lg hover:bg-dark-700 transition">
-              <Shield className="text-primary-500" size={24} />
+            <div className="flex items-center gap-3 p-4 bg-dark-800 rounded-lg hover:bg-dark-700 transition min-h-[88px]">
+              <Shield className="text-primary-500" size={22} />
               <div>
                 <p className="text-sm text-gray-400">Plano</p>
-                <p className="font-medium capitalize">{user?.role || 'Premium'}</p>
+                <p className="font-medium">{planLabel}</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 p-4 bg-dark-800 rounded-lg hover:bg-dark-700 transition">
-              <Calendar className="text-primary-500" size={24} />
+            <div className="flex items-center gap-3 p-4 bg-dark-800 rounded-lg hover:bg-dark-700 transition min-h-[88px]">
+              <Heart className="text-red-500" size={22} />
+              <div>
+                <p className="text-sm text-gray-400">Favoritos</p>
+                <p className="font-medium">{favoritesCount}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 p-4 bg-dark-800 rounded-lg hover:bg-dark-700 transition min-h-[88px]">
+              <Tv className="text-primary-500" size={22} />
+              <div>
+                <p className="text-sm text-gray-400">IPTV</p>
+                <p className={"font-medium " + (isIptvConfigured ? 'text-green-500' : 'text-gray-200')}>
+                  {isIptvConfigured ? 'Configurado' : 'Não configurado'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 p-4 bg-dark-800 rounded-lg hover:bg-dark-700 transition min-h-[88px]">
+              <Calendar className="text-primary-500" size={22} />
               <div>
                 <p className="text-sm text-gray-400">Membro desde</p>
                 <p className="font-medium">
@@ -160,8 +198,8 @@ export default function Profile() {
               </div>
             </div>
 
-            <div className="flex items-center gap-3 p-4 bg-dark-800 rounded-lg hover:bg-dark-700 transition">
-              <User className="text-primary-500" size={24} />
+            <div className="flex items-center gap-3 p-4 bg-dark-800 rounded-lg hover:bg-dark-700 transition min-h-[88px]">
+              <User className="text-primary-500" size={22} />
               <div>
                 <p className="text-sm text-gray-400">Status</p>
                 <p className="font-medium text-green-500">Ativo</p>

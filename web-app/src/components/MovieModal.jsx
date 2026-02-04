@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Play, Star, Clock, Calendar } from 'lucide-react';
+import { X, Play, Star, Clock, Calendar, Heart } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { logger } from '@/utils/logger';
 import { contentAPI } from '@/services/api';
+import useFavoritesStore from '@store/favoritesStore';
 
 export default function MovieModal({ movie, onClose }) {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const [details, setDetails] = useState(null);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const { isFavorite, toggle } = useFavoritesStore();
 
   const mergedMovie = useMemo(() => {
     if (!details) return movie;
@@ -132,13 +134,32 @@ export default function MovieModal({ movie, onClose }) {
             )}
           </div>
 
-          <button
-            onClick={onClose}
-            className="ml-2 p-2 hover:bg-dark-700 rounded-lg transition"
-            aria-label="Fechar"
-          >
-            <X size={24} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-label={
+                isFavorite?.(mergedMovie?._id, 'movie') ? 'Remover dos favoritos' : 'Salvar nos favoritos'
+              }
+              title={
+                isFavorite?.(mergedMovie?._id, 'movie') ? 'Remover dos favoritos' : 'Salvar nos favoritos'
+              }
+              onClick={() => toggle?.({ ...mergedMovie, type: 'movie' })}
+              className={
+                'p-2 hover:bg-dark-700 rounded-lg transition ' +
+                (isFavorite?.(mergedMovie?._id, 'movie') ? 'text-red-500' : 'text-gray-200')
+              }
+            >
+              <Heart size={22} className={isFavorite?.(mergedMovie?._id, 'movie') ? 'fill-red-500' : ''} />
+            </button>
+
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-dark-700 rounded-lg transition"
+              aria-label="Fechar"
+            >
+              <X size={24} />
+            </button>
+          </div>
         </div>
 
         {/* Body */}

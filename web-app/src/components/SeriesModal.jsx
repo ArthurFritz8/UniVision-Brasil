@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
-import { X, ChevronRight, Play } from 'lucide-react';
+import { X, ChevronRight, Play, Heart } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { contentAPI } from '@services/api';
 import toast from 'react-hot-toast';
 import { logger } from '@/utils/logger';
+import useFavoritesStore from '@store/favoritesStore';
 
 export default function SeriesModal({ series, onClose }) {
   const navigate = useNavigate();
+  const { isFavorite, toggle } = useFavoritesStore();
   const [seasons, setSeasons] = useState([]);
   const [selectedSeason, setSelectedSeason] = useState(null);
   const [episodes, setEpisodes] = useState([]);
@@ -130,12 +132,28 @@ export default function SeriesModal({ series, onClose }) {
               <p className="text-gray-500">Sem sinopse disponível.</p>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="ml-4 p-2 hover:bg-dark-700 rounded-lg transition"
-          >
-            <X size={24} />
-          </button>
+          <div className="ml-4 flex items-center gap-2">
+            <button
+              type="button"
+              aria-label={isFavorite?.(series?._id, 'series') ? 'Remover dos favoritos' : 'Salvar nos favoritos'}
+              title={isFavorite?.(series?._id, 'series') ? 'Remover dos favoritos' : 'Salvar nos favoritos'}
+              onClick={() => toggle?.({ ...series, type: 'series' })}
+              className={
+                'p-2 hover:bg-dark-700 rounded-lg transition ' +
+                (isFavorite?.(series?._id, 'series') ? 'text-red-500' : 'text-gray-200')
+              }
+            >
+              <Heart size={22} className={isFavorite?.(series?._id, 'series') ? 'fill-red-500' : ''} />
+            </button>
+
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-dark-700 rounded-lg transition"
+              aria-label="Fechar"
+            >
+              <X size={24} />
+            </button>
+          </div>
         </div>
 
         {/* Content */}

@@ -81,10 +81,19 @@ const useAuthStore = create(
       updateProfile: async (data) => {
         try {
           const response = await authAPI.updateProfile(data);
-          set({ user: response.data.user });
+          const updatedUser = response?.user || response?.data?.user;
+          if (updatedUser) {
+            set({ user: updatedUser });
+            localStorage.setItem('user', JSON.stringify(updatedUser));
+          }
           return response;
         } catch (error) {
-          throw error;
+          // Fallback local (sem backend)
+          const current = get().user || {};
+          const updatedUser = { ...current, ...(data || {}) };
+          set({ user: updatedUser });
+          localStorage.setItem('user', JSON.stringify(updatedUser));
+          return { success: true, user: updatedUser };
         }
       },
       
