@@ -45,7 +45,30 @@ export default function ContentGrid({ items, type, emptyMessage }) {
   };
 
   const getPlaceholderImage = (title) => {
-    return `https://via.placeholder.com/300x450/1e293b/0ea5e9?text=${encodeURIComponent(title)}`;
+    // Local (offline) placeholder to avoid DNS/CORS issues with external placeholder services.
+    const safe = String(title || '').slice(0, 40);
+    const bg = '#1e293b';
+    const fg = '#94a3b8';
+    const accent = '#0ea5e9';
+    const w = type === 'channel' ? 640 : 300;
+    const h = type === 'channel' ? 360 : 450;
+    const label = type === 'channel' ? 'Canal' : 'Conteúdo';
+
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="${bg}"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#g)"/>
+  <rect x="0" y="0" width="100%" height="6" fill="${accent}" opacity="0.7"/>
+  <text x="50%" y="46%" text-anchor="middle" fill="${fg}" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="18" font-weight="700">${label}</text>
+  <text x="50%" y="58%" text-anchor="middle" fill="#cbd5e1" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="16">${safe.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</text>
+</svg>`;
+
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
   };
 
   useEffect(() => {
@@ -107,21 +130,32 @@ export default function ContentGrid({ items, type, emptyMessage }) {
           onClick={() => handlePlay(item)}
         >
           {/* Thumbnail */}
-          <div className="relative aspect-[2/3] bg-dark-800 flex items-center justify-center">
+          <div
+            className={`relative ${type === 'channel' ? 'aspect-video' : 'aspect-[2/3]'} bg-dark-800 flex items-center justify-center`}
+          >
             {imageErrors[item._id] ? (
               // Fallback quando imagem não carrega
               <div className="w-full h-full bg-gradient-to-br from-dark-700 to-dark-800 flex flex-col items-center justify-center p-4">
-                <div className="text-4xl mb-2">🎬</div>
+                <div className="text-4xl mb-2">{type === 'channel' ? '📡' : '🎬'}</div>
                 <p className="text-center text-gray-500 text-xs truncate">{item.title}</p>
               </div>
             ) : (
               <img
-                src={item.poster || item.thumbnail || getPlaceholderImage(item.title)}
+                src={
+                  type === 'channel'
+                    ? (item.logo || item.poster || item.thumbnail || getPlaceholderImage(item.title))
+                    : (item.poster || item.thumbnail || getPlaceholderImage(item.title))
+                }
                 alt={item.title}
                 loading="lazy"
                 decoding="async"
+                referrerPolicy="no-referrer"
                 onError={() => handleImageError(item._id)}
-                className="w-full h-full object-cover"
+                className={
+                  type === 'channel'
+                    ? 'w-full h-full object-contain p-4'
+                    : 'w-full h-full object-cover'
+                }
               />
             )}
             

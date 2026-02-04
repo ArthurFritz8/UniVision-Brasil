@@ -267,6 +267,79 @@ const getProxyBaseUrl = (req) => {
   return `${proto}://${host}`;
 };
 
+const IMG_CACHE_MAX_AGE = Number(process.env.IMG_CACHE_MAX_AGE || 21600); // 6h
+
+// Proxy para imagens (logos de canais, posters, etc.)
+app.get('/img', async (req, res) => {
+  const imageUrl = req.query.url;
+
+  try {
+    if (!imageUrl) {
+      return res.status(400).json({ error: 'URL não fornecida' });
+    }
+
+    let u;
+    try {
+      u = new URL(String(imageUrl));
+    } catch {
+      return res.status(400).json({ error: 'URL inválida' });
+    }
+
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      return res.status(400).json({ error: 'Protocolo inválido' });
+    }
+
+    log('debug', 'img.fetch', { requestId: req.id, imageUrl });
+
+    const response = await upstream.get(u.toString(), {
+      headers: {
+        ...getHeaders(),
+        Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+      },
+      responseType: 'stream',
+      timeout: 30000,
+    });
+
+    if (response.status >= 400) {
+      log('warn', 'img.upstream_http_error', { requestId: req.id, status: response.status, imageUrl });
+      return res.status(response.status).end();
+    }
+
+    res.status(200);
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.set('Cache-Control', `public, max-age=${IMG_CACHE_MAX_AGE}`);
+
+    const passthrough = ['content-type', 'content-length', 'etag', 'last-modified'];
+    for (const key of passthrough) {
+      const v = response.headers[key];
+      if (v) res.set(key, v);
+    }
+
+    response.data.on('error', (err) => {
+      log('debug', 'img.upstream_stream_error', { requestId: req.id, imageUrl, code: err?.code }, err);
+      try {
+        res.destroy(err);
+      } catch {
+        // ignore
+      }
+    });
+
+    response.data.pipe(res);
+  } catch (error) {
+    log('warn', 'img.proxy_failed', { requestId: req.id, imageUrl }, error);
+    res.status(500).end();
+  }
+});
+
+app.options('/img', (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.status(204).end();
+});
+
 const isLikelyM3u8 = (url) => {
   try {
     const u = new URL(url);

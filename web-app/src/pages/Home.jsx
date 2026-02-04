@@ -16,6 +16,33 @@ export default function Home() {
     loadHomeData();
   }, []);
 
+  const getPlaceholderImage = (title, kind) => {
+    const safe = String(title || '').slice(0, 40);
+    const bg = '#1e293b';
+    const fg = '#94a3b8';
+    const accent = '#0ea5e9';
+    const isChannel = kind === 'channel';
+    const w = isChannel ? 640 : 300;
+    const h = isChannel ? 360 : 450;
+    const label = isChannel ? 'Canal' : 'Filme';
+
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="${bg}"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#g)"/>
+  <rect x="0" y="0" width="100%" height="6" fill="${accent}" opacity="0.7"/>
+  <text x="50%" y="46%" text-anchor="middle" fill="${fg}" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="18" font-weight="700">${label}</text>
+  <text x="50%" y="58%" text-anchor="middle" fill="#cbd5e1" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="16">${safe.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</text>
+</svg>`;
+
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  };
+
   const pickDefaultCategory = (cats) => {
     const list = Array.isArray(cats) ? cats : [];
     const preferred = list.find((c) => {
@@ -116,8 +143,11 @@ export default function Home() {
             >
               <div className="aspect-video bg-dark-800 rounded-lg overflow-hidden">
                 <img
-                  src={channel.thumbnail || 'https://via.placeholder.com/300x200?text=Canal'}
+                  src={channel.logo || channel.thumbnail || getPlaceholderImage(channel.title, 'channel')}
                   alt={channel.title}
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
                   className="w-full h-full object-cover"
                 />
               </div>
@@ -147,7 +177,7 @@ export default function Home() {
             >
               <div className="aspect-[2/3] bg-dark-800 rounded-lg overflow-hidden">
                 <img
-                  src={movie.poster || 'https://via.placeholder.com/300x450?text=Filme'}
+                  src={movie.poster || getPlaceholderImage(movie.title, 'movie')}
                   alt={movie.title}
                   className="w-full h-full object-cover"
                 />

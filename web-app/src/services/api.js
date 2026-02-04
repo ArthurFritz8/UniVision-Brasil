@@ -13,6 +13,13 @@ import {
 // Pode ser sobrescrito via VITE_IPTV_PROXY_URL, ex: http://localhost:3101
 export const IPTV_PROXY_BASE_URL = import.meta.env.VITE_IPTV_PROXY_URL || 'http://localhost:3101';
 
+const proxyImageUrl = (url) => {
+  if (!url || typeof url !== 'string') return null;
+  if (url.startsWith('data:')) return url;
+  if (url.startsWith(IPTV_PROXY_BASE_URL)) return url;
+  return `${IPTV_PROXY_BASE_URL}/img?url=${encodeURIComponent(url)}`;
+};
+
 // Função para obter credenciais do localStorage
 const getIptvCredentials = () => {
   try {
@@ -287,7 +294,7 @@ export const channelsAPI = {
           _id: stream.stream_id || stream.id,
           title: stream.name,
           number: stream.num,
-          logo: stream.stream_icon,
+          logo: proxyImageUrl(stream.stream_icon),
           streamUrl: stream.stream_url || `${baseUrl}/live/${credentials?.username}/${credentials?.password}/${stream.stream_id}.m3u8`,
           category: stream.category_name,
           isLive: true,
@@ -324,7 +331,7 @@ export const channelsAPI = {
         channel: {
           _id: info.stream_id || id,
           title: info.name,
-          logo: info.stream_icon,
+          logo: proxyImageUrl(info.stream_icon),
           streamUrl: streamUrl,
         }
       };
@@ -345,7 +352,7 @@ export const channelsAPI = {
       const channels = streams.map(stream => ({
         _id: stream.stream_id || stream.id,
         title: stream.name,
-        logo: stream.stream_icon,
+        logo: proxyImageUrl(stream.stream_icon),
         streamUrl: stream.stream_url,
       }));
       return { channels };
