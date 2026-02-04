@@ -842,7 +842,10 @@ app.listen(PORT, () => {
   log('info', 'startup', {
     port: PORT,
     api: `http://localhost:${PORT}/iptv?url=SUA_URL_API`,
+    img: `http://localhost:${PORT}/img?url=SUA_URL_IMAGEM`,
     stream: `http://localhost:${PORT}/stream?url=SUA_URL_VIDEO`,
     hls: `http://localhost:${PORT}/hls?url=SUA_URL_M3U8`,
+    seriesInfo: `http://localhost:${PORT}/series/info?base=SUA_PLAYER_API_BASE&series_id=123`,
+    seriesEpisodes: `http://localhost:${PORT}/series/episodes?base=SUA_PLAYER_API_BASE&series_id=123&season_number=1`,
   });
 });
