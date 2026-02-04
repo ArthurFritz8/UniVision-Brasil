@@ -4,6 +4,7 @@ import { favoritesAPI } from '@services/api';
 import ContentGrid from '@components/ContentGrid';
 import Loading from '@components/Loading';
 import toast from 'react-hot-toast';
+import { logger } from '@/utils/logger';
 
 export default function Favorites() {
   const [favorites, setFavorites] = useState([]);
@@ -19,7 +20,7 @@ export default function Favorites() {
       const response = await favoritesAPI.getAll();
       setFavorites(response.data.favorites || []);
     } catch (error) {
-      console.error('Erro ao carregar favoritos:', error);
+      logger.error('pages.favorites.load_failed', undefined, error);
       toast.error('Erro ao carregar favoritos');
     } finally {
       setLoading(false);

@@ -3,6 +3,7 @@ import { X, ChevronRight, Play } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { contentAPI } from '@services/api';
 import toast from 'react-hot-toast';
+import { logger } from '@/utils/logger';
 
 export default function SeriesModal({ series, onClose }) {
   const navigate = useNavigate();
@@ -18,27 +19,30 @@ export default function SeriesModal({ series, onClose }) {
   const loadSeasons = async () => {
     try {
       setLoading(true);
-      console.log('🎬 Carregando temporadas para série:', series._id, series.title);
+      logger.debug('seriesModal.loadSeasons.start', { seriesId: series?._id, title: series?.title });
       
       // Get series info para descobrir quantas temporadas tem
       const response = await contentAPI.getSeriesInfo({ 
         series_id: series._id 
       });
       
-      console.log('🎬 Resposta getSeriesInfo:', response);
+      logger.debug('seriesModal.loadSeasons.response', {
+        seasons: response?.seasons?.length,
+        hasInfo: !!response?.info,
+      });
       
       if (response?.seasons && response.seasons.length > 0) {
         setSeasons(response.seasons);
         const firstSeason = response.seasons[0].season_number;
         setSelectedSeason(firstSeason);
-        console.log('🎬 Carregando episódios da primeira temporada:', firstSeason);
+        logger.debug('seriesModal.loadEpisodes.firstSeason', { season: firstSeason });
         loadEpisodes(firstSeason);
       } else {
-        console.warn('⚠️ Nenhuma temporada encontrada');
+        logger.warn('seriesModal.loadSeasons.noSeasons');
         setSeasons([]);
       }
     } catch (error) {
-      console.error('❌ Erro ao carregar temporadas:', error);
+      logger.error('seriesModal.loadSeasons.failed', { seriesId: series?._id }, error);
       toast.error('Erro ao carregar temporadas');
     } finally {
       setLoading(false);
@@ -48,17 +52,20 @@ export default function SeriesModal({ series, onClose }) {
   const loadEpisodes = async (seasonNumber) => {
     try {
       setLoading(true);
-      console.log('🎬 Carregando episódios:', { series_id: series._id, season_number: seasonNumber });
+      logger.debug('seriesModal.loadEpisodes.start', {
+        seriesId: series?._id,
+        seasonNumber,
+      });
       
       const response = await contentAPI.getSeriesEpisodes({
         series_id: series._id,
         season_number: seasonNumber
       });
       
-      console.log('🎬 Resposta getSeriesEpisodes:', response);
+      logger.debug('seriesModal.loadEpisodes.response', { count: response?.episodes?.length });
       setEpisodes(response?.episodes || []);
     } catch (error) {
-      console.error('❌ Erro ao carregar episódios:', error);
+      logger.error('seriesModal.loadEpisodes.failed', { seriesId: series?._id, seasonNumber }, error);
       toast.error('Erro ao carregar episódios');
     } finally {
       setLoading(false);
@@ -83,7 +90,12 @@ export default function SeriesModal({ series, onClose }) {
       episode: episode.episode_number,
     }));
 
-    console.log('▶️ Reproduzindo episódio:', episode);
+    logger.debug('seriesModal.playEpisode', {
+      seriesId: series?._id,
+      episodeId: episode?.id,
+      season: episode?.season_number,
+      episode: episode?.episode_number,
+    });
     
     // Navegar para player passando tipo e ID
     navigate(`/player/series/${episode.id}`);

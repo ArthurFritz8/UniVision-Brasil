@@ -1,5 +1,6 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
+import { logger } from '@/utils/logger';
 import { 
   mockChannels, 
   mockMovies, 
@@ -21,7 +22,7 @@ const getIptvCredentials = () => {
       return data?.state?.credentials || null;
     }
   } catch (error) {
-    console.error('Error reading IPTV credentials:', error);
+    logger.error('iptv.credentials.read_failed', undefined, error);
   }
   return null;
 };
@@ -36,7 +37,16 @@ const normalizeBaseUrl = (apiUrl) => {
   return baseUrl;
 };
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+// Backend API base (optional). Use same-origin by default so dev-server proxy can be used when backend is running.
+const API_URL = import.meta.env.VITE_API_URL || '/api';
+
+// In this repo, `npm run dev:all` starts only web+proxy (no backend).
+// To avoid noisy connection errors, we only try backend fallback in dev when explicitly enabled.
+const SHOULD_TRY_BACKEND_IN_DEV = String(import.meta.env.VITE_TRY_BACKEND || '').toLowerCase() === 'true';
+const shouldTryBackend = () => {
+  if (!import.meta.env.DEV) return true;
+  return SHOULD_TRY_BACKEND_IN_DEV;
+};
 
 const api = axios.create({
   baseURL: API_URL,
@@ -80,10 +90,12 @@ const createIptvClient = () => {
         : fullUrl;
       
       const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(finalUrl)}`;
-      
-      console.log('🔗 URL Final para proxy:', finalUrl);
-      console.log('🔗 Query String:', queryString);
-      console.log('🔗 Params recebidos:', params);
+
+      logger.debug('iptv.proxy.get', {
+        action: params?.action,
+        params,
+        hasQueryString: !!queryString,
+      });
       
       return axios.get(proxyUrl, {
         timeout: 30000, // 30 segundos
@@ -122,39 +134,45 @@ const fetchWithMock = async (fn, mockData) => {
   
   // Se tiver credenciais configuradas, tenta usar a API real
   if (iptvClient) {
-    console.log('🔄 Tentando API IPTV:', {
-      url: credentials?.apiUrl,
-      username: credentials?.username,
-      hasPassword: !!credentials?.password
+    logger.debug('fetchWithMock.try_iptv', {
+      apiUrl: credentials?.apiUrl,
+      hasUsername: !!credentials?.username,
+      hasPassword: !!credentials?.password,
     });
     
     try {
       const response = await fn(iptvClient);
-      console.log('✅ Conteúdo carregado da API IPTV:', response);
+      logger.debug('fetchWithMock.iptv_ok');
       return response;
     } catch (error) {
-      console.error('❌ API IPTV falhou:', {
-        message: error.message,
-        status: error.response?.status,
-        data: error.response?.data,
-        url: error.config?.url
-      });
+      logger.warn(
+        'fetchWithMock.iptv_failed',
+        {
+          message: error?.message,
+          status: error?.response?.status,
+        },
+        error
+      );
     }
   } else {
-    console.warn('⚠️ Sem credenciais IPTV configuradas');
+    logger.debug('fetchWithMock.no_iptv_credentials');
   }
   
-  // Tenta API padrão
-  try {
-    console.log('🔄 Tentando API padrão...');
-    const response = await fn(api);
-    console.log('✅ Dados da API padrão');
-    return response;
-  } catch (error) {
-    console.warn('⚠️ API padrão indisponível, usando dados mock');
+  // Tenta API padrão (backend) apenas quando habilitado
+  if (shouldTryBackend()) {
+    try {
+      logger.debug('fetchWithMock.try_default_api');
+      const response = await fn(api);
+      logger.debug('fetchWithMock.default_api_ok');
+      return response;
+    } catch (error) {
+      logger.warn('fetchWithMock.default_api_failed', { message: error?.message });
+    }
+  } else {
+    logger.debug('fetchWithMock.skip_default_api_in_dev');
   }
   
-  console.log('📦 Usando dados mock');
+  logger.info('fetchWithMock.using_mock');
   return mockData;
 };
 
@@ -237,17 +255,24 @@ export const channelsAPI = {
       return client.get('', { params: clientParams }).then(res => {
         // Transformar resposta Xtream Codes para nosso formato
         // res é a resposta direta do axios (já com .data extraído pelo interceptor)
-        console.log('📦 Raw response:', typeof res, Array.isArray(res), JSON.stringify(res).substring(0, 200));
+        logger.debug('channels.getAll.raw', {
+          type: typeof res,
+          isArray: Array.isArray(res),
+          length: Array.isArray(res) ? res.length : undefined,
+        });
         
         // Se recebeu um objeto com user_info, significa que não passou o action
         if (res && typeof res === 'object' && res.user_info) {
-          console.error('⚠️ Recebeu user_info em vez de streams. A URL pode estar incorreta.');
+          logger.warn('channels.getAll.unexpected_user_info');
           return { channels: [], total: 0, page: 1, limit: 20 };
         }
         
         let streams = Array.isArray(res) ? res : (Array.isArray(res.data) ? res.data : []);
-        
-        console.log('🔍 Streams recebidos:', streams.length, 'itens', streams.slice(0, 1));
+
+        logger.debug('channels.getAll.streams', {
+          count: streams.length,
+          firstKeys: streams[0] && typeof streams[0] === 'object' ? Object.keys(streams[0]).slice(0, 12) : undefined,
+        });
         
         const credentials = getIptvCredentials();
         let baseUrl = credentials?.apiUrl || 'http://localhost:8000';
@@ -273,7 +298,11 @@ export const channelsAPI = {
     (client) => client.get('', { 
       params: { action: 'get_live_info', stream_id: id } 
     }).then(res => {
-      console.log('📺 getById resposta:', typeof res, Array.isArray(res), JSON.stringify(res).substring(0, 300));
+      logger.debug('channels.getById.raw', {
+        id,
+        type: typeof res,
+        isArray: Array.isArray(res),
+      });
       
       // Tratar resposta - pode ser um objeto direto ou com .data
       const info = (res && typeof res === 'object') 
@@ -305,7 +334,7 @@ export const channelsAPI = {
     }).then(res => {
       // Se recebeu user_info, algo deu errado
       if (res && typeof res === 'object' && res.user_info) {
-        console.error('⚠️ Recebeu user_info em vez de streams.');
+        logger.warn('channels.getFeatured.unexpected_user_info');
         return { channels: [] };
       }
       
@@ -345,22 +374,25 @@ export const contentAPI = {
       
       return client.get('', { params: clientParams }).then(res => {
         // Tratar resposta tanto como array direto (proxy) quanto como objeto com data
-        console.log('📦 Content Raw response:', typeof res, Array.isArray(res), JSON.stringify(res).substring(0, 200));
+        logger.debug('content.getAll.raw', {
+          type: typeof res,
+          isArray: Array.isArray(res),
+          length: Array.isArray(res) ? res.length : undefined,
+          action,
+        });
         
         // Se recebeu user_info, algo deu errado com a URL
         if (res && typeof res === 'object' && res.user_info) {
-          console.error('⚠️ Recebeu user_info em vez de conteúdos.');
+          logger.warn('content.getAll.unexpected_user_info', { action });
           return { contents: [], total: 0, page: 1, limit: 20 };
         }
         
         let streams = Array.isArray(res) ? res : (Array.isArray(res.data) ? res.data : []);
-        
-        console.log('🔍 Conteúdos recebidos:', streams.length, 'itens', streams.slice(0, 1));
-        
-        // Log detalhado do primeiro item para debug
-        if (streams.length > 0) {
-          console.log('🎬 Primeiro conteúdo completo:', JSON.stringify(streams[0], null, 2));
-        }
+
+        logger.debug('content.getAll.streams', {
+          count: streams.length,
+          firstKeys: streams[0] && typeof streams[0] === 'object' ? Object.keys(streams[0]).slice(0, 12) : undefined,
+        });
         
         const credentials = getIptvCredentials();
         let baseUrl = credentials?.apiUrl || 'http://localhost:8000';
@@ -424,7 +456,7 @@ export const contentAPI = {
     (client) => client.get('', { 
       params: { action: 'get_vod_info', vod_id: id } 
     }).then(res => {
-      console.log('🎬 getById VOD resposta:', typeof res, JSON.stringify(res).substring(0, 300));
+      logger.debug('content.getById.raw', { id, type: typeof res });
       
       // Tratar resposta - pode ser um objeto direto ou com .data
       const info = (res && typeof res === 'object') 
@@ -473,7 +505,7 @@ export const contentAPI = {
             const payload = res?.data ?? res;
 
             if (!payload || (typeof payload === 'object' && payload.user_info)) {
-              console.warn('⚠️ get_series_info retornou payload inesperado');
+              logger.warn('series.getSeriesInfo.unexpected_payload');
               return { seasons: [], info: null, episodesBySeason: {} };
             }
 
@@ -546,7 +578,7 @@ const generateMockEpisodes = (params) => {
   const seasonNumber = params.season_number || 1;
   const episodeCount = episodesPerSeason[seasonNumber] || 10;
   
-  console.log('📺 Gerando episódios mock:', episodeCount, 'para temporada', seasonNumber);
+  logger.trace('series.mock_episodes.generate', { episodeCount, seasonNumber });
   
   // Pegar credenciais para montar URL
   const credentials = getIptvCredentials();
@@ -577,10 +609,7 @@ const generateMockEpisodes = (params) => {
     };
   });
   
-  console.log('📺 Episódios mock gerados:', episodes.length);
-  if (episodes.length > 0) {
-    console.log('📺 Exemplo URL episódio 1:', episodes[0].streamUrl);
-  }
+  logger.trace('series.mock_episodes.generated', { count: episodes.length });
   return { episodes };
 };
 
@@ -589,7 +618,7 @@ const fetchWithMockSync = async (fetchFn, mockFn) => {
   try {
     return await fetchFn(createIptvClient());
   } catch (err) {
-    console.log('📡 Usando fallback mock:', err.message);
+    logger.warn('fetchWithMockSync.using_mock', { message: err?.message });
     return mockFn();
   }
 };
@@ -607,17 +636,22 @@ export const categoriesAPI = {
       
       return client.get('', { params: { action } }).then(res => {
         // Tratar resposta tanto como array direto (proxy) quanto como objeto com data
-        console.log('📦 Categories Raw response:', typeof res, Array.isArray(res), JSON.stringify(res).substring(0, 200));
+        logger.debug('categories.getAll.raw', {
+          type: typeof res,
+          isArray: Array.isArray(res),
+          length: Array.isArray(res) ? res.length : undefined,
+          action,
+        });
         
         // Se recebeu user_info, algo deu errado com a URL
         if (res && typeof res === 'object' && res.user_info) {
-          console.error('⚠️ Recebeu user_info em vez de categorias.');
+          logger.warn('categories.getAll.unexpected_user_info', { action });
           return { categories: [], total: 0 };
         }
         
         let cats = Array.isArray(res) ? res : (Array.isArray(res.data) ? res.data : []);
-        
-        console.log('🔍 Categorias recebidas:', cats.length, 'itens', cats.slice(0, 2));
+
+        logger.debug('categories.getAll.count', { count: cats.length });
         
         const categories = cats.map(cat => ({
           _id: cat.category_id,

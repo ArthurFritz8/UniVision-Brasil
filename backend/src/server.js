@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
+import { randomUUID } from 'crypto';
 import { connectDB } from './config/database.js';
 import { connectRedis } from './config/redis.js';
 import { logger, morganMiddleware } from './config/logger.js';
@@ -26,6 +27,16 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+
+// Request ID para correlacionar logs e respostas
+app.use((req, res, next) => {
+  req.id = randomUUID();
+  res.set('x-request-id', req.id);
+  next();
+});
 
 // Middlewares de segurança e performance
 app.use(helmet({

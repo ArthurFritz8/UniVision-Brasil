@@ -3,6 +3,7 @@ import { Play, Star, Clock } from 'lucide-react';
 import { useState } from 'react';
 import useAuthStore from '@store/authStore';
 import SeriesModal from './SeriesModal';
+import { logger } from '@/utils/logger';
 
 export default function ContentGrid({ items, type, emptyMessage }) {
   const navigate = useNavigate();
@@ -41,7 +42,7 @@ export default function ContentGrid({ items, type, emptyMessage }) {
   };
 
   if (!items || items.length === 0) {
-    console.warn('⚠️ ContentGrid: Sem itens para exibir', { items, type });
+    logger.trace('components.contentGrid.empty', { type });
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <div className="text-6xl mb-4">📺</div>
@@ -50,7 +51,7 @@ export default function ContentGrid({ items, type, emptyMessage }) {
     );
   }
 
-  console.log('✅ ContentGrid: Renderizando', items.length, 'itens do tipo', type, items.slice(0, 2));
+  logger.trace('components.contentGrid.render', { type, count: items.length });
 
   return (
     <div className="grid-responsive">

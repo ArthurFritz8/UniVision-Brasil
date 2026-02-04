@@ -2,6 +2,7 @@ import { User, Mail, Calendar, Shield, Edit2, Save, X } from 'lucide-react';
 import { useState } from 'react';
 import useAuthStore from '@store/authStore';
 import toast from 'react-hot-toast';
+import { logger } from '@/utils/logger';
 
 export default function Profile() {
   const { user, updateProfile } = useAuthStore();
@@ -36,7 +37,7 @@ export default function Profile() {
       setIsEditing(false);
     } catch (error) {
       toast.error('Erro ao atualizar perfil');
-      console.error(error);
+      logger.error('pages.profile.update_failed', undefined, error);
     } finally {
       setIsSaving(false);
     }

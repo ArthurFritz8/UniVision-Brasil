@@ -65,7 +65,9 @@ const stream = {
   write: (message) => logger.info(message.trim())
 };
 
+morgan.token('rid', (req) => req.id || '-');
+
 export const morganMiddleware = morgan(
-  ':remote-addr :method :url :status :res[content-length] - :response-time ms',
+  ':rid :remote-addr :method :url :status :res[content-length] - :response-time ms',
   { stream }
 );

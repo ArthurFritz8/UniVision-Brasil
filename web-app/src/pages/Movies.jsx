@@ -6,6 +6,7 @@ import ContentGrid from '@components/ContentGrid';
 import CategoryFilter from '@components/CategoryFilter';
 import Loading from '@components/Loading';
 import toast from 'react-hot-toast';
+import { logger } from '@/utils/logger';
 
 export default function Movies() {
   const [movies, setMovies] = useState([]);
@@ -34,11 +35,15 @@ export default function Movies() {
         })
       ]);
 
-      console.log('🎬 Dados recebidos:', { categoriesRes, moviesRes });
+      logger.debug('pages.movies.data_loaded', {
+        categories: categoriesRes?.categories?.length,
+        movies: moviesRes?.contents?.length,
+        selectedCategory,
+      });
       setCategories(categoriesRes?.categories || []);
       setMovies(moviesRes?.contents || []);
     } catch (error) {
-      console.error('Erro ao carregar filmes:', error);
+      logger.error('pages.movies.load_failed', { selectedCategory }, error);
       toast.error('Erro ao carregar filmes');
     } finally {
       setLoading(false);

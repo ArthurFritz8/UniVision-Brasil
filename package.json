@@ -27,7 +27,7 @@
     "clean": "rm -rf node_modules backend/node_modules web-app/node_modules pc-web/proxy/node_modules backend/dist web-app/dist"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^9.2.1"
   },
   "engines": {
     "node": ">=18.0.0",

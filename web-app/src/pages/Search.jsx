@@ -5,6 +5,7 @@ import { searchAPI } from '@services/api';
 import ContentGrid from '@components/ContentGrid';
 import Loading from '@components/Loading';
 import toast from 'react-hot-toast';
+import { logger } from '@/utils/logger';
 
 export default function Search() {
   const [searchParams] = useSearchParams();
@@ -42,7 +43,7 @@ export default function Search() {
         toast.error('Nenhum resultado encontrado');
       }
     } catch (error) {
-      console.error('Erro na busca:', error);
+      logger.error('pages.search.failed', { query }, error);
       toast.error('Erro ao buscar');
       setResults([]);
       setMovies([]);

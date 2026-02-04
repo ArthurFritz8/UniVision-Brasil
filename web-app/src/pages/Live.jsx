@@ -6,6 +6,7 @@ import ContentGrid from '@components/ContentGrid';
 import CategoryFilter from '@components/CategoryFilter';
 import Loading from '@components/Loading';
 import toast from 'react-hot-toast';
+import { logger } from '@/utils/logger';
 
 export default function Live() {
   const [channels, setChannels] = useState([]);
@@ -33,11 +34,15 @@ export default function Live() {
         })
       ]);
 
-      console.log('📺 Dados recebidos:', { categoriesRes, channelsRes });
+      logger.debug('pages.live.data_loaded', {
+        categories: categoriesRes?.categories?.length,
+        channels: channelsRes?.channels?.length,
+        selectedCategory,
+      });
       setCategories(categoriesRes?.categories || []);
       setChannels(channelsRes?.channels || []);
     } catch (error) {
-      console.error('Erro ao carregar canais:', error);
+      logger.error('pages.live.load_failed', { selectedCategory }, error);
       toast.error('Erro ao carregar canais');
     } finally {
       setLoading(false);

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Play, TrendingUp, Clock } from 'lucide-react';
 import { channelsAPI, contentAPI } from '@services/api';
 import useAuthStore from '@store/authStore';
+import { logger } from '@/utils/logger';
 
 export default function Home() {
   const [featured, setFeatured] = useState([]);
@@ -23,11 +24,14 @@ export default function Home() {
         contentAPI.getAll({ type: 'movie', limit: 12 })
       ]);
 
-      console.log('🏠 Home - Dados:', { channelsRes, moviesRes });
+      logger.debug('pages.home.data_loaded', {
+        channels: channelsRes?.channels?.length,
+        movies: moviesRes?.contents?.length,
+      });
       setPopularChannels(channelsRes?.channels || []);
       setRecentMovies(moviesRes?.contents || []);
     } catch (error) {
-      console.error('Erro ao carregar dados:', error);
+      logger.error('pages.home.load_failed', undefined, error);
       setPopularChannels([]);
       setRecentMovies([]);
     } finally {

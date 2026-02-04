@@ -97,8 +97,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    assetsInlineLimit: 4096,
     rollupOptions: {
       output: {
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash][extname]',
         manualChunks: {
           'react-vendor': ['react', 'react-dom', 'react-router-dom'],
           'video-player': ['hls.js'],

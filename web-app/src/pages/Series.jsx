@@ -6,6 +6,7 @@ import ContentGrid from '@components/ContentGrid';
 import CategoryFilter from '@components/CategoryFilter';
 import Loading from '@components/Loading';
 import toast from 'react-hot-toast';
+import { logger } from '@/utils/logger';
 
 export default function Series() {
   const [series, setSeries] = useState([]);
@@ -34,11 +35,15 @@ export default function Series() {
         })
       ]);
 
-      console.log('📺 Dados recebidos:', { categoriesRes, seriesRes });
+      logger.debug('pages.series.data_loaded', {
+        categories: categoriesRes?.categories?.length,
+        series: seriesRes?.contents?.length,
+        selectedCategory,
+      });
       setCategories(categoriesRes?.categories || []);
       setSeries(seriesRes?.contents || []);
     } catch (error) {
-      console.error('Erro ao carregar séries:', error);
+      logger.error('pages.series.load_failed', { selectedCategory }, error);
       toast.error('Erro ao carregar séries');
     } finally {
       setLoading(false);

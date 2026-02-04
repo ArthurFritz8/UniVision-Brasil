@@ -29,4 +29,9 @@ app.use('/proxy', (req, res, next) => {
 });
 
 const port = process.env.PORT || 8081;
-app.listen(port, () => console.log(`Proxy rodando em http://localhost:${port}`));
+const log = (level, msg, meta) => {
+  const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+  fn('[SIMPLE-PROXY]', { ts: new Date().toISOString(), level, msg, ...(meta ? { meta } : null) });
+};
+
+app.listen(port, () => log('info', 'startup', { port, url: `http://localhost:${port}` }));

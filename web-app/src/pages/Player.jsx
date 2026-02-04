@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import Hls from 'hls.js';
 import { X } from 'lucide-react';
 import { channelsAPI, contentAPI, IPTV_PROXY_BASE_URL } from '../services/api';
+import { logger } from '@/utils/logger';
 
 export default function Player() {
   const { type, id } = useParams();
@@ -25,7 +25,7 @@ export default function Player() {
           const item = JSON.parse(sessionData);
           if (item.streamUrl) {
             url = item.streamUrl;
-            console.log('✅ Stream encontrada no sessionStorage:', { id, url });
+            logger.debug('player.sessionStorage.stream_found', { id, url });
           }
         }
         
@@ -35,12 +35,12 @@ export default function Player() {
             // Carregar stream de TV ao vivo
             const response = await channelsAPI.getById(id);
             url = response.channel?.streamUrl;
-            console.log('📺 Stream de TV:', { id, url });
+            logger.debug('player.live.stream_loaded', { id, url });
           } else if (type === 'movie' || type === 'series') {
             // Carregar stream de filme ou série
             const response = await contentAPI.getById(id);
             url = response.content?.streamUrl;
-            console.log('🎬 Stream de conteúdo:', { id, type, url });
+            logger.debug('player.content.stream_loaded', { id, type, url });
           }
         }
         
@@ -57,13 +57,17 @@ export default function Player() {
         const proxyStreamUrl = isHlsUrl
           ? `${IPTV_PROXY_BASE_URL}/hls?url=${encodeURIComponent(url)}`
           : `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(url)}`;
-        console.log('🔗 Stream URL original:', url);
-        console.log('🎬 Stream via proxy:', proxyStreamUrl);
+
+        logger.debug('player.stream.proxy_url', {
+          originalUrl: url,
+          proxyUrl: proxyStreamUrl,
+          isHlsUrl,
+        });
         
         setStreamUrl(proxyStreamUrl);
         setLoading(false);
       } catch (err) {
-        console.error('Erro ao carregar stream:', err);
+        logger.error('player.load_stream_failed', { type, id }, err);
         setError(err.message || 'Erro ao carregar stream');
         setLoading(false);
       }
@@ -78,7 +82,7 @@ export default function Player() {
     const video = document.getElementById('video-player');
     if (!video) return;
 
-    console.log('🎬 Carregando stream:', streamUrl);
+    logger.debug('player.stream.load', { streamUrl });
 
     const isHlsStream = streamUrl.includes('/hls?') || /\.m3u8(\?|$)/i.test(streamUrl) || /\.m3u(\?|$)/i.test(streamUrl);
 
@@ -91,33 +95,62 @@ export default function Player() {
     video.crossOrigin = 'anonymous';
 
     let hls;
+    let cancelled = false;
     if (isHlsStream) {
       // Safari (e alguns ambientes) suportam HLS nativo
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = streamUrl;
-      } else if (Hls.isSupported()) {
-        hls = new Hls({
-          lowLatencyMode: true,
-          enableWorker: true,
-        });
-        hls.loadSource(streamUrl);
-        hls.attachMedia(video);
       } else {
-        setError('Seu navegador não suporta HLS');
-        setLoading(false);
-        return;
+        // Carregar hls.js sob demanda (reduz bundle inicial)
+        (async () => {
+          try {
+            const mod = await import('hls.js');
+            const Hls = mod.default;
+            if (cancelled) return;
+
+            if (!Hls?.isSupported?.()) {
+              setError('Seu navegador não suporta HLS');
+              setLoading(false);
+              return;
+            }
+
+            hls = new Hls({
+              lowLatencyMode: true,
+              enableWorker: true,
+            });
+            hls.loadSource(streamUrl);
+            hls.attachMedia(video);
+
+            hls.on(Hls.Events.ERROR, (_event, data) => {
+              logger.error(
+                'player.hls.error',
+                {
+                  type: data?.type,
+                  details: data?.details,
+                  fatal: data?.fatal,
+                  responseCode: data?.response?.code,
+                },
+                data?.error
+              );
+            });
+          } catch (err) {
+            logger.error('player.hls.import_failed', { streamUrl }, err);
+            setError('Falha ao inicializar player HLS');
+            setLoading(false);
+          }
+        })();
       }
     } else {
       video.src = streamUrl;
     }
     
     video.addEventListener('play', () => {
-      console.log('▶️ Vídeo iniciando reprodução');
+      logger.trace('player.video.play');
       setLoading(false);
     }, { once: true });
     
     const onError = (e) => {
-      console.error('❌ Erro na tag video:', {
+      logger.error('player.video.error', {
         code: video.error?.code,
         message: video.error?.message,
         error: e
@@ -129,16 +162,17 @@ export default function Player() {
     video.addEventListener('error', onError);
     
     video.addEventListener('loadstart', () => {
-      console.log('⏳ Iniciando carregamento do stream');
+      logger.trace('player.video.loadstart');
     });
     
     video.addEventListener('canplay', () => {
-      console.log('✅ Vídeo pronto para reproduzir');
+      logger.trace('player.video.canplay');
       setLoading(false);
     });
     
     return () => {
       video.removeEventListener('error', onError);
+      cancelled = true;
       if (hls) {
         try {
           hls.destroy();

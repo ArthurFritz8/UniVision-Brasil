@@ -4,6 +4,7 @@ import useAppStore from '@store/appStore';
 import useIptvStore from '@store/iptvStore';
 import toast from 'react-hot-toast';
 import { IPTV_PROXY_BASE_URL } from '@services/api';
+import { logger } from '@/utils/logger';
 
 export default function Settings() {
   const { theme, toggleTheme, playerSettings, setPlayerSettings } = useAppStore();
@@ -22,7 +23,7 @@ export default function Settings() {
     setTesting(true);
     try {
       const stored = localStorage.getItem('iptv-credentials');
-      console.log('📦 localStorage raw:', stored);
+      logger.debug('pages.settings.test_connection.localStorage', { hasValue: !!stored });
       
       if (!stored) {
         toast.error('Nenhuma credencial salva!');
@@ -51,24 +52,27 @@ export default function Settings() {
       // USAR PROXY
       const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(fullUrl)}`;
       
-      console.log('🔗 URL via proxy:', proxyUrl);
+      logger.debug('pages.settings.test_connection.request', { proxyUrl });
       toast('Testando via proxy...', { icon: '🔄' });
       
       const response = await fetch(proxyUrl);
-      console.log('📡 Resposta:', response.status);
+      logger.debug('pages.settings.test_connection.response', { status: response.status });
       
       if (response.ok) {
         const jsonData = await response.json();
-        console.log('✅ Dados:', jsonData);
+        logger.debug('pages.settings.test_connection.ok', {
+          type: typeof jsonData,
+          count: Array.isArray(jsonData) ? jsonData.length : undefined,
+        });
         const count = Array.isArray(jsonData) ? jsonData.length : 0;
         toast.success(`✅ Conexão OK! ${count} canais encontrados`);
       } else {
         const errorText = await response.text();
-        console.error('❌ Erro:', errorText);
+        logger.warn('pages.settings.test_connection.http_error', { status: response.status, errorText });
         toast.error(`Erro: ${response.status}`);
       }
     } catch (error) {
-      console.error('❌ Erro:', error);
+      logger.error('pages.settings.test_connection.failed', undefined, error);
       toast.error(`Falha: ${error.message}`);
     } finally {
       setTesting(false);

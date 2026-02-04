@@ -1,7 +1,7 @@
 import { logger } from '../config/logger.js';
 
 export const errorHandler = (err, req, res, next) => {
-  logger.error('Erro capturado:', err);
+  logger.error(`Erro capturado (rid=${req.id || '-'})`, err);
 
   // Mongoose validation error
   if (err.name === 'ValidationError') {
@@ -9,7 +9,8 @@ export const errorHandler = (err, req, res, next) => {
     return res.status(400).json({
       success: false,
       message: 'Erro de validação',
-      errors
+      errors,
+      requestId: req.id
     });
   }
 
@@ -18,7 +19,8 @@ export const errorHandler = (err, req, res, next) => {
     const field = Object.keys(err.keyPattern)[0];
     return res.status(400).json({
       success: false,
-      message: `${field} já está em uso.`
+      message: `${field} já está em uso.`,
+      requestId: req.id
     });
   }
 
@@ -26,7 +28,8 @@ export const errorHandler = (err, req, res, next) => {
   if (err.name === 'CastError') {
     return res.status(400).json({
       success: false,
-      message: 'ID inválido fornecido.'
+      message: 'ID inválido fornecido.',
+      requestId: req.id
     });
   }
 
@@ -34,14 +37,16 @@ export const errorHandler = (err, req, res, next) => {
   if (err.name === 'JsonWebTokenError') {
     return res.status(401).json({
       success: false,
-      message: 'Token inválido.'
+      message: 'Token inválido.',
+      requestId: req.id
     });
   }
 
   if (err.name === 'TokenExpiredError') {
     return res.status(401).json({
       success: false,
-      message: 'Token expirado.'
+      message: 'Token expirado.',
+      requestId: req.id
     });
   }
 
@@ -52,6 +57,7 @@ export const errorHandler = (err, req, res, next) => {
   res.status(statusCode).json({
     success: false,
     message,
+    requestId: req.id,
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
   });
 };
