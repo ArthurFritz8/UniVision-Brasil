@@ -109,6 +109,18 @@ const log = (levelName, message, meta, error) => {
   fn('[IPTV-PROXY]', payload);
 };
 
+const isUpstreamNetworkError = (err) => {
+  const code = err?.code;
+  return (
+    code === 'ECONNABORTED' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNRESET' ||
+    code === 'EAI_AGAIN' ||
+    code === 'ENOTFOUND' ||
+    code === 'ECONNREFUSED'
+  );
+};
+
 // CORS totalmente aberto
 app.use(cors());
 
@@ -435,11 +447,31 @@ app.get('/iptv', async (req, res) => {
       res.send(response.data);
     }
   } catch (error) {
-    log('error', 'iptv.proxy_failed', { requestId: req.id, code: error.code, targetUrl: req.query.url }, error);
-    res.status(500).json({ 
+    const networkish = isUpstreamNetworkError(error);
+    const code = error?.code;
+
+    // Provider/network instability is common; log as warn and avoid stack spam.
+    if (networkish) {
+      log(
+        'warn',
+        'iptv.upstream_unreachable',
+        { requestId: req.id, code, targetUrl: req.query.url },
+        { name: error?.name, message: error?.message, code }
+      );
+      return res.status(504).json({
+        error: 'Upstream indisponível',
+        message: error?.message,
+        code,
+        url: req.query.url,
+        requestId: req.id,
+      });
+    }
+
+    log('error', 'iptv.proxy_failed', { requestId: req.id, code, targetUrl: req.query.url }, error);
+    res.status(500).json({
       error: 'Falha ao conectar',
-      message: error.message,
-      code: error.code,
+      message: error?.message,
+      code,
       url: req.query.url,
       requestId: req.id,
     });
