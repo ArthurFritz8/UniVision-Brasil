@@ -38,7 +38,8 @@ const normalizeBaseUrl = (apiUrl) => {
   if (!apiUrl) return null;
   let baseUrl = apiUrl;
   if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-    baseUrl = 'http://' + baseUrl;
+    // Most providers work better on HTTPS when scheme is omitted.
+    baseUrl = 'https://' + baseUrl;
   }
   baseUrl = baseUrl.replace('/player_api.php', '').replace(/\/$/, '');
   return baseUrl;
@@ -69,7 +70,7 @@ const buildXtreamPlayerApiBase = () => {
 
   let baseUrl = credentials.apiUrl;
   if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-    baseUrl = 'http://' + baseUrl;
+    baseUrl = 'https://' + baseUrl;
   }
   if (!baseUrl.endsWith('/')) {
     baseUrl += '/';
@@ -90,7 +91,7 @@ const createIptvClient = () => {
   // Construir URL completa com credenciais
   let baseUrl = credentials.apiUrl;
   if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-    baseUrl = 'http://' + baseUrl;
+    baseUrl = 'https://' + baseUrl;
   }
   if (!baseUrl.endsWith('/')) {
     baseUrl += '/';

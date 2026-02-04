@@ -751,11 +751,68 @@ app.get('/iptv', async (req, res) => {
       }
     }
 
-    const response = await upstream.get(targetUrl, {
-      headers: getHeaders(),
-      family: 4, // Força IPv4
-      responseType: 'arraybuffer',
-    });
+    const buildCandidateUrls = (rawUrl) => {
+      try {
+        const u = new URL(String(rawUrl));
+        const urls = [u.toString()];
+
+        // Many IPTV providers advertise URLs without scheme and work only on HTTPS.
+        // When a provider returns 502/5xx over HTTP, retry over HTTPS (and vice-versa).
+        if (u.protocol === 'http:') {
+          const httpsUrl = new URL(u.toString());
+          httpsUrl.protocol = 'https:';
+          urls.push(httpsUrl.toString());
+        } else if (u.protocol === 'https:') {
+          const httpUrl = new URL(u.toString());
+          httpUrl.protocol = 'http:';
+          urls.push(httpUrl.toString());
+        }
+        return urls;
+      } catch {
+        return [String(rawUrl)];
+      }
+    };
+
+    const fetchOnce = (url) =>
+      upstream.get(url, {
+        headers: getHeaders(),
+        family: 4, // Força IPv4
+        responseType: 'arraybuffer',
+      });
+
+    const candidates = buildCandidateUrls(targetUrl);
+    let response = null;
+    let lastError = null;
+
+    for (let i = 0; i < candidates.length; i++) {
+      const candidateUrl = candidates[i];
+      try {
+        if (i > 0) {
+          log('warn', 'iptv.retry_candidate', {
+            requestId: req.id,
+            from: targetUrl,
+            to: candidateUrl,
+          });
+        }
+
+        const r = await fetchOnce(candidateUrl);
+        response = r;
+
+        if (r.status < 400) break;
+
+        // If upstream is refusing or gatewaying (common on http), try next candidate.
+        const retryableStatus = r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
+        if (!retryableStatus || i === candidates.length - 1) break;
+      } catch (err) {
+        lastError = err;
+        const networkish = isUpstreamNetworkError(err);
+        if (!networkish || i === candidates.length - 1) throw err;
+      }
+    }
+
+    if (!response) {
+      throw lastError || new Error('No upstream response');
+    }
 
     log('debug', 'iptv.upstream_status', { requestId: req.id, status: response.status });
     
