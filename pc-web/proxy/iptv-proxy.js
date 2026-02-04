@@ -440,6 +440,187 @@ app.options('/hls', (req, res) => {
   res.status(204).end();
 });
 
+// --- Xtream helpers (series) ---
+const parseXtreamBase = (rawBase) => {
+  let u;
+  try {
+    u = new URL(String(rawBase));
+  } catch {
+    return null;
+  }
+
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+
+  const username = u.searchParams.get('username');
+  const password = u.searchParams.get('password');
+
+  // Base for stream URLs (remove /player_api.php)
+  const pathname = String(u.pathname || '');
+  const apiPath = pathname.endsWith('/player_api.php') ? pathname.slice(0, -'/player_api.php'.length) : pathname;
+  const apiBase = `${u.origin}${apiPath}`.replace(/\/$/, '');
+
+  return { url: u, username, password, apiBase };
+};
+
+const normalizeSeasonsFromSeriesInfo = (payload) => {
+  const seasonsRaw = Array.isArray(payload?.seasons) ? payload.seasons : [];
+  return seasonsRaw
+    .map((s) => ({
+      season_number: Number(s?.season_number ?? s?.season ?? s?.number ?? 0),
+      episode_count: Number(s?.episode_count ?? s?.episodes ?? 0),
+    }))
+    .filter((s) => Number.isFinite(s.season_number) && s.season_number > 0)
+    .sort((a, b) => a.season_number - b.season_number);
+};
+
+const fetchXtreamJsonCached = async ({ targetUrl, requestId }) => {
+  const cacheKey = getXtreamCacheKey(targetUrl);
+  const ttlMs = cacheKey ? getXtreamTtlMs(targetUrl) : 0;
+
+  if (cacheKey && ttlMs > 0) {
+    const hit = cacheGet(cacheKey);
+    if (hit) {
+      try {
+        return { json: JSON.parse(hit.body), cache: 'HIT' };
+      } catch {
+        // fall through
+      }
+    }
+  }
+
+  const response = await upstream.get(targetUrl, {
+    headers: getHeaders(),
+    family: 4,
+    responseType: 'arraybuffer',
+  });
+
+  if (response.status >= 400) {
+    const err = new Error(`Upstream HTTP ${response.status}`);
+    err.statusCode = response.status;
+    err.upstreamStatus = response.status;
+    err.requestId = requestId;
+    throw err;
+  }
+
+  const text = Buffer.from(response.data).toString('utf8');
+  const json = JSON.parse(text);
+
+  if (cacheKey && ttlMs > 0) {
+    cacheSet(cacheKey, JSON.stringify(json), ttlMs);
+  }
+
+  return { json, cache: cacheKey && ttlMs > 0 ? 'MISS' : 'BYPASS' };
+};
+
+// Returns only seasons + info (no big episodes payload)
+app.get('/series/info', async (req, res) => {
+  const base = req.query.base;
+  const seriesId = req.query.series_id;
+
+  try {
+    if (!base) return res.status(400).json({ error: 'Parâmetro base ausente' });
+    if (!seriesId) return res.status(400).json({ error: 'Parâmetro series_id ausente' });
+
+    const parsed = parseXtreamBase(base);
+    if (!parsed) return res.status(400).json({ error: 'Base inválida' });
+
+    const u = new URL(parsed.url.toString());
+    u.searchParams.set('action', 'get_series_info');
+    u.searchParams.set('series_id', String(seriesId));
+    const targetUrl = u.toString();
+
+    log('debug', 'series.info', { requestId: req.id, seriesId, targetUrl });
+    const { json, cache } = await fetchXtreamJsonCached({ targetUrl, requestId: req.id });
+
+    const seasons = normalizeSeasonsFromSeriesInfo(json);
+    res.status(200);
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('x-cache', cache);
+    res.json({ seasons, info: json?.info || null });
+  } catch (error) {
+    const status = error?.statusCode || 500;
+    log(status >= 500 ? 'error' : 'warn', 'series.info_failed', { requestId: req.id, seriesId, base }, error);
+    res.status(status).json({ error: 'Falha ao buscar série', message: error?.message, requestId: req.id });
+  }
+});
+
+// Returns episodes for one season, already mapped for the client
+app.get('/series/episodes', async (req, res) => {
+  const base = req.query.base;
+  const seriesId = req.query.series_id;
+  const seasonNumber = Number(req.query.season_number ?? req.query.season ?? 1);
+
+  try {
+    if (!base) return res.status(400).json({ error: 'Parâmetro base ausente' });
+    if (!seriesId) return res.status(400).json({ error: 'Parâmetro series_id ausente' });
+    if (!Number.isFinite(seasonNumber) || seasonNumber <= 0) {
+      return res.status(400).json({ error: 'Parâmetro season_number inválido' });
+    }
+
+    const parsed = parseXtreamBase(base);
+    if (!parsed) return res.status(400).json({ error: 'Base inválida' });
+
+    const u = new URL(parsed.url.toString());
+    u.searchParams.set('action', 'get_series_info');
+    u.searchParams.set('series_id', String(seriesId));
+    const targetUrl = u.toString();
+
+    log('debug', 'series.episodes', { requestId: req.id, seriesId, seasonNumber, targetUrl });
+    const { json, cache } = await fetchXtreamJsonCached({ targetUrl, requestId: req.id });
+
+    const episodesBySeason = json?.episodes && typeof json.episodes === 'object' ? json.episodes : {};
+    const rawList = Array.isArray(episodesBySeason[String(seasonNumber)]) ? episodesBySeason[String(seasonNumber)] : [];
+
+    const episodes = rawList
+      .map((ep) => {
+        const episodeId = ep?.id ?? ep?.episode_id ?? ep?.stream_id;
+        const ext = ep?.container_extension || 'mp4';
+        const direct = ep?.direct_source;
+
+        const streamUrl =
+          direct ||
+          (parsed.apiBase && parsed.username && parsed.password && episodeId
+            ? `${parsed.apiBase}/series/${parsed.username}/${parsed.password}/${episodeId}.${ext}`
+            : null);
+
+        return {
+          id: episodeId,
+          episode_number: Number(ep?.episode_num ?? ep?.episode_number ?? ep?.num ?? 0),
+          season_number: Number(ep?.season ?? seasonNumber),
+          title: ep?.title || (ep?.episode_num ? `Episódio ${ep.episode_num}` : 'Episódio'),
+          plot: ep?.info?.plot ?? null,
+          streamUrl,
+        };
+      })
+      .filter((e) => e.streamUrl);
+
+    res.status(200);
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('x-cache', cache);
+    res.json({ episodes });
+  } catch (error) {
+    const status = error?.statusCode || 500;
+    log(status >= 500 ? 'error' : 'warn', 'series.episodes_failed', { requestId: req.id, seriesId, seasonNumber, base }, error);
+    res.status(status).json({ error: 'Falha ao buscar episódios', message: error?.message, requestId: req.id });
+  }
+});
+
+app.options('/series/info', (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.status(204).end();
+});
+
+app.options('/series/episodes', (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.status(204).end();
+});
+
 // Proxy para vídeos (streaming)
 app.get('/stream', async (req, res) => {
   try {

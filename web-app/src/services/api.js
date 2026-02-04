@@ -63,6 +63,22 @@ const api = axios.create({
   },
 });
 
+const buildXtreamPlayerApiBase = () => {
+  const credentials = getIptvCredentials();
+  if (!credentials?.apiUrl) return null;
+
+  let baseUrl = credentials.apiUrl;
+  if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+    baseUrl = 'http://' + baseUrl;
+  }
+  if (!baseUrl.endsWith('/')) {
+    baseUrl += '/';
+  }
+
+  const fullUrl = `${baseUrl}player_api.php?username=${credentials.username}&password=${credentials.password}`;
+  return { fullUrl };
+};
+
 // Função para criar cliente API com credenciais IPTV
 const createIptvClient = () => {
   const credentials = getIptvCredentials();
@@ -511,6 +527,47 @@ export const contentAPI = {
         const seriesId = params?.series_id;
         if (!seriesId) return Promise.resolve({ seasons: [], info: null, episodesBySeason: {} });
 
+        // Prefer server-side processing via proxy to avoid shipping huge episode payloads to the client.
+        const base = buildXtreamPlayerApiBase()?.fullUrl;
+        if (base) {
+          const url = `${IPTV_PROXY_BASE_URL}/series/info?base=${encodeURIComponent(base)}&series_id=${encodeURIComponent(seriesId)}`;
+          return axios
+            .get(url, { timeout: 30000, headers: { 'Content-Type': 'application/json' } })
+            .then((r) => ({ seasons: r?.data?.seasons || [], info: r?.data?.info || null, episodesBySeason: {} }))
+            .catch((err) => {
+              logger.warn('series.getSeriesInfo.proxy_failed', { message: err?.message });
+              return null;
+            })
+            .then((proxyResult) => {
+              if (proxyResult) return proxyResult;
+              // Fallback: direct Xtream call (returns large payload)
+              return client
+                .get('', { params: { action: 'get_series_info', series_id: seriesId } })
+                .then((res) => {
+                  const payload = res?.data ?? res;
+
+                  if (!payload || (typeof payload === 'object' && payload.user_info)) {
+                    logger.warn('series.getSeriesInfo.unexpected_payload');
+                    return { seasons: [], info: null, episodesBySeason: {} };
+                  }
+
+                  const seasonsRaw = Array.isArray(payload.seasons) ? payload.seasons : [];
+                  const seasons = seasonsRaw
+                    .map((s) => ({
+                      season_number: Number(s.season_number ?? s.season ?? s.number ?? 0),
+                      episode_count: Number(s.episode_count ?? s.episodes ?? 0),
+                    }))
+                    .filter((s) => Number.isFinite(s.season_number) && s.season_number > 0);
+
+                  // Intentionally keep episodesBySeason only in fallback mode.
+                  const episodesBySeason =
+                    payload.episodes && typeof payload.episodes === 'object' ? payload.episodes : {};
+
+                  return { seasons, info: payload.info || null, episodesBySeason };
+                });
+            });
+        }
+
         return client
           .get('', { params: { action: 'get_series_info', series_id: seriesId } })
           .then((res) => {
@@ -542,6 +599,57 @@ export const contentAPI = {
   getSeriesEpisodes: (params) => {
     const seriesId = params?.series_id;
     const seasonNumber = Number(params?.season_number ?? 1);
+
+    const base = buildXtreamPlayerApiBase()?.fullUrl;
+    if (base && seriesId) {
+      const url = `${IPTV_PROXY_BASE_URL}/series/episodes?base=${encodeURIComponent(base)}&series_id=${encodeURIComponent(seriesId)}&season_number=${encodeURIComponent(seasonNumber)}`;
+      return axios
+        .get(url, { timeout: 30000, headers: { 'Content-Type': 'application/json' } })
+        .then((r) => ({ episodes: r?.data?.episodes || [] }))
+        .catch((err) => {
+          logger.warn('series.getSeriesEpisodes.proxy_failed', { message: err?.message });
+          return null;
+        })
+        .then((proxyResult) => {
+          if (proxyResult) return proxyResult;
+          // Fallback to legacy client-side mapping
+          return contentAPI.getSeriesInfo({ series_id: seriesId }).then((info) => {
+            const episodesBySeason = info?.episodesBySeason || {};
+            const seasonKey = String(seasonNumber);
+            const rawList = Array.isArray(episodesBySeason[seasonKey]) ? episodesBySeason[seasonKey] : [];
+
+            const credentials = getIptvCredentials();
+            const baseUrl = normalizeBaseUrl(credentials?.apiUrl);
+
+            const episodes = rawList
+              .map((ep) => {
+                const episodeId = ep?.id ?? ep?.episode_id ?? ep?.stream_id;
+                const ext = ep?.container_extension || 'mp4';
+
+                // Alguns provedores já mandam URL direta
+                const direct = ep?.direct_source;
+
+                const streamUrl =
+                  direct ||
+                  (baseUrl && credentials?.username && credentials?.password && episodeId
+                    ? `${baseUrl}/series/${credentials.username}/${credentials.password}/${episodeId}.${ext}`
+                    : null);
+
+                return {
+                  id: episodeId,
+                  episode_number: Number(ep?.episode_num ?? ep?.episode_number ?? ep?.num ?? 0),
+                  season_number: Number(ep?.season ?? seasonNumber),
+                  title: ep?.title || (ep?.episode_num ? `Episódio ${ep.episode_num}` : 'Episódio'),
+                  plot: ep?.info?.plot ?? null,
+                  streamUrl,
+                };
+              })
+              .filter((e) => e.streamUrl);
+
+            return { episodes };
+          });
+        });
+    }
 
     return contentAPI.getSeriesInfo({ series_id: seriesId }).then((info) => {
       const episodesBySeason = info?.episodesBySeason || {};

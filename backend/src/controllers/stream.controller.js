@@ -8,6 +8,18 @@ const STREAM_TOKEN_SECRET = process.env.STREAM_TOKEN_SECRET || process.env.JWT_S
 const STREAM_TOKEN_EXPIRE = process.env.STREAM_TOKEN_EXPIRE || '10m';
 const STREAM_TOKEN_BIND_IP = String(process.env.STREAM_TOKEN_BIND_IP || '').toLowerCase() === 'true';
 
+// Axios `timeout` here is a socket inactivity timeout (not total stream duration).
+// This protects the server from hanging upstream connections when the origin is slow/unresponsive.
+const STREAM_UPSTREAM_INACTIVITY_TIMEOUT_MS = Number(process.env.STREAM_UPSTREAM_INACTIVITY_TIMEOUT_MS || 20000);
+const STREAM_UPSTREAM_PLAYLIST_TIMEOUT_MS = Number(process.env.STREAM_UPSTREAM_PLAYLIST_TIMEOUT_MS || 30000);
+const STREAM_UPSTREAM_MAX_REDIRECTS = Number(process.env.STREAM_UPSTREAM_MAX_REDIRECTS || 5);
+
+const isClientAbortCancel = (err) => {
+  const code = err?.code;
+  const name = err?.name;
+  return code === 'ERR_CANCELED' || name === 'CanceledError' || name === 'AbortError';
+};
+
 const getClientIp = (req) => req.ip;
 
 const getAllowedUpstreamHosts = (primaryHost) => {
@@ -284,8 +296,8 @@ export const proxyStream = async (req, res, next) => {
     if (String(item.streamUrl).includes('.m3u8')) {
       const playlistResp = await axios.get(item.streamUrl, {
         responseType: 'arraybuffer',
-        timeout: 30000,
-        maxRedirects: 5,
+        timeout: STREAM_UPSTREAM_PLAYLIST_TIMEOUT_MS,
+        maxRedirects: STREAM_UPSTREAM_MAX_REDIRECTS,
         validateStatus: () => true,
         headers: {
           Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
@@ -307,11 +319,25 @@ export const proxyStream = async (req, res, next) => {
 
     // MP4 etc
     const range = req.headers.range;
+    const controller = new AbortController();
+    const abortUpstream = () => {
+      try {
+        controller.abort();
+      } catch {
+        // ignore
+      }
+    };
+    req.on('aborted', abortUpstream);
+    res.on('close', abortUpstream);
+
     const upstream = await axios.get(item.streamUrl, {
       responseType: 'stream',
-      timeout: 0,
-      maxRedirects: 5,
+      timeout: STREAM_UPSTREAM_INACTIVITY_TIMEOUT_MS,
+      maxRedirects: STREAM_UPSTREAM_MAX_REDIRECTS,
       validateStatus: () => true,
+      signal: controller.signal,
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
       headers: {
         ...(range ? { Range: range } : {}),
       },
@@ -365,6 +391,10 @@ export const proxyStream = async (req, res, next) => {
 
     upstream.data.pipe(res);
   } catch (error) {
+    if (isClientAbortCancel(error)) {
+      // Client disconnected; avoid noisy 500s/log spam.
+      return;
+    }
     next(error);
   }
 };
@@ -393,11 +423,25 @@ export const fetchStreamResource = async (req, res, next) => {
     const u = assertUpstreamUrlAllowed(rawUrl, allowedHosts);
 
     const range = req.headers.range;
+    const controller = new AbortController();
+    const abortUpstream = () => {
+      try {
+        controller.abort();
+      } catch {
+        // ignore
+      }
+    };
+    req.on('aborted', abortUpstream);
+    res.on('close', abortUpstream);
+
     const upstream = await axios.get(u.toString(), {
       responseType: 'stream',
-      timeout: 0,
-      maxRedirects: 5,
+      timeout: STREAM_UPSTREAM_INACTIVITY_TIMEOUT_MS,
+      maxRedirects: STREAM_UPSTREAM_MAX_REDIRECTS,
       validateStatus: () => true,
+      signal: controller.signal,
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
       headers: {
         ...(range ? { Range: range } : {}),
       },
@@ -451,6 +495,9 @@ export const fetchStreamResource = async (req, res, next) => {
 
     upstream.data.pipe(res);
   } catch (error) {
+    if (isClientAbortCancel(error)) {
+      return;
+    }
     next(error);
   }
 };
