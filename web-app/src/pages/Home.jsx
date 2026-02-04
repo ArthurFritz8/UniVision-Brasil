@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Play, TrendingUp, Clock } from 'lucide-react';
-import { channelsAPI, contentAPI } from '@services/api';
+import { channelsAPI, contentAPI, categoriesAPI } from '@services/api';
 import useAuthStore from '@store/authStore';
 import { logger } from '@/utils/logger';
 
@@ -16,12 +16,36 @@ export default function Home() {
     loadHomeData();
   }, []);
 
+  const pickDefaultCategory = (cats) => {
+    const list = Array.isArray(cats) ? cats : [];
+    const preferred = list.find((c) => {
+      const id = String(c?._id ?? '');
+      const name = String(c?.name ?? '').toLowerCase();
+      if (!id) return false;
+      if (id === '0') return false;
+      if (name.includes('all') || name.includes('todos')) return false;
+      return true;
+    });
+    return (preferred?._id ?? list[0]?._id ?? null) || null;
+  };
+
   const loadHomeData = async () => {
     try {
       setLoading(true);
+
+      // Em muitos provedores Xtream, pedir listas sem categoria baixa o catálogo inteiro (lento).
+      // Então pegamos categorias (rápido) e carregamos só uma categoria padrão para o Home.
+      const [liveCats, vodCats] = await Promise.all([
+        categoriesAPI.getAll({ type: 'live' }),
+        categoriesAPI.getAll({ type: 'vod' }),
+      ]);
+
+      const liveCategory = pickDefaultCategory(liveCats?.categories);
+      const vodCategory = pickDefaultCategory(vodCats?.categories);
+
       const [channelsRes, moviesRes] = await Promise.all([
-        channelsAPI.getAll({ limit: 12 }),
-        contentAPI.getAll({ type: 'movie', limit: 12 })
+        channelsAPI.getAll({ category: liveCategory, limit: 12 }),
+        contentAPI.getAll({ type: 'movie', category: vodCategory, limit: 12 }),
       ]);
 
       logger.debug('pages.home.data_loaded', {

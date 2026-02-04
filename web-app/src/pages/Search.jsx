@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search as SearchIcon } from 'lucide-react';
 import { searchAPI } from '@services/api';
@@ -14,21 +14,39 @@ export default function Search() {
   const [movies, setMovies] = useState([]);
   const [series, setSeries] = useState([]);
   const query = searchParams.get('q') || '';
+  const requestSeq = useRef(0);
 
   useEffect(() => {
-    if (query) {
-      handleSearch();
-    } else {
+    const q = String(query || '').trim();
+
+    if (!q) {
       setResults([]);
       setMovies([]);
       setSeries([]);
+      return;
     }
+
+    // Debounce para não disparar busca a cada navegação/tecla
+    const seq = ++requestSeq.current;
+    const t = setTimeout(() => {
+      handleSearch(q, seq);
+    }, 300);
+
+    return () => clearTimeout(t);
   }, [query]);
 
-  const handleSearch = async () => {
+  const handleSearch = async (q, seq) => {
     try {
+      if (String(q).length < 2) {
+        setResults([]);
+        setMovies([]);
+        setSeries([]);
+        return;
+      }
+
       setLoading(true);
-      const response = await searchAPI.search({ query, limit: 50 });
+      const response = await searchAPI.search({ query: q, limit: 50 });
+      if (seq !== requestSeq.current) return;
       const allResults = response?.results || [];
       
       // Separar por tipo
@@ -40,16 +58,18 @@ export default function Search() {
       setResults(allResults);
       
       if (allResults.length === 0) {
-        toast.error('Nenhum resultado encontrado');
+        // Evitar spam de toast; mantém a UI de "nenhum resultado".
+        toast('Nenhum resultado encontrado', { icon: '🔍' });
       }
     } catch (error) {
-      logger.error('pages.search.failed', { query }, error);
+      if (seq !== requestSeq.current) return;
+      logger.error('pages.search.failed', { query: q }, error);
       toast.error('Erro ao buscar');
       setResults([]);
       setMovies([]);
       setSeries([]);
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   };
 

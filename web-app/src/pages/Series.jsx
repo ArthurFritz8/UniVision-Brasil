@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { contentAPI, categoriesAPI } from '@services/api';
 import useAppStore from '@store/appStore';
@@ -13,42 +13,105 @@ export default function Series() {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchParams, setSearchParams] = useSearchParams();
+  const seriesCacheRef = useRef(new Map());
   
   const selectedCategory = searchParams.get('category');
-  const { setActiveCategory } = useAppStore();
+  const { setActiveCategory, categoriesCache, updateCategoriesCache } = useAppStore();
+
+  const pickDefaultCategory = (cats) => {
+    const list = Array.isArray(cats) ? cats : [];
+    const preferred = list.find((c) => {
+      const id = String(c?._id ?? '');
+      const name = String(c?.name ?? '').toLowerCase();
+      if (!id) return false;
+      if (id === '0') return false;
+      if (name.includes('all') || name.includes('todos')) return false;
+      return true;
+    });
+    return (preferred?._id ?? list[0]?._id ?? null) || null;
+  };
 
   useEffect(() => {
-    loadData();
-  }, [selectedCategory]);
+    let cancelled = false;
+    const loadCategories = async () => {
+      try {
+        const cachedCats = Array.isArray(categoriesCache?.series) ? categoriesCache.series : null;
 
-  const loadData = async () => {
-    try {
-      setLoading(true);
+        const cats = cachedCats?.length
+          ? cachedCats
+          : (await categoriesAPI.getAll({ type: 'series' }))?.categories || [];
 
-      // Carrega categorias e séries em paralelo
-      const [categoriesRes, seriesRes] = await Promise.all([
-        categoriesAPI.getAll({ type: 'series' }),
-        contentAPI.getAll({ 
+        if (cancelled) return;
+
+        setCategories(cats);
+        if (!cachedCats?.length) updateCategoriesCache?.('series', cats);
+
+        if (!selectedCategory) {
+          const fallback = pickDefaultCategory(cats);
+          if (fallback) {
+            setSearchParams({ category: fallback }, { replace: true });
+            setActiveCategory(fallback);
+            return;
+          }
+        }
+
+        setLoading(false);
+      } catch (error) {
+        logger.error('pages.series.categories_load_failed', undefined, error);
+        toast.error('Erro ao carregar categorias');
+        setLoading(false);
+      }
+    };
+
+    loadCategories();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadSeries = async () => {
+      try {
+        if (!selectedCategory) return;
+        setLoading(true);
+
+        const cached = seriesCacheRef.current.get(String(selectedCategory));
+        if (cached) {
+          setSeries(cached);
+          setLoading(false);
+          return;
+        }
+
+        const seriesRes = await contentAPI.getAll({
           type: 'series',
           category: selectedCategory,
-          limit: 100 
-        })
-      ]);
+          limit: 100,
+        });
+        if (cancelled) return;
 
-      logger.debug('pages.series.data_loaded', {
-        categories: categoriesRes?.categories?.length,
-        series: seriesRes?.contents?.length,
-        selectedCategory,
-      });
-      setCategories(categoriesRes?.categories || []);
-      setSeries(seriesRes?.contents || []);
-    } catch (error) {
-      logger.error('pages.series.load_failed', { selectedCategory }, error);
-      toast.error('Erro ao carregar séries');
-    } finally {
-      setLoading(false);
-    }
-  };
+        const list = seriesRes?.contents || [];
+        seriesCacheRef.current.set(String(selectedCategory), list);
+
+        logger.debug('pages.series.data_loaded', {
+          series: list.length,
+          selectedCategory,
+        });
+        setSeries(list);
+      } catch (error) {
+        logger.error('pages.series.load_failed', { selectedCategory }, error);
+        toast.error('Erro ao carregar séries');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    loadSeries();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCategory]);
 
   const handleCategoryChange = (categoryId) => {
     if (categoryId) {

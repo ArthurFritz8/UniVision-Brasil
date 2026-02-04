@@ -121,6 +121,88 @@ const isUpstreamNetworkError = (err) => {
   );
 };
 
+// --- Simple TTL + LRU cache for metadata endpoints (JSON) ---
+// Helps a lot when navigating between pages or reloading the app.
+const CACHE_MAX_ENTRIES = Number(process.env.CACHE_MAX_ENTRIES || 60);
+const CACHE_MAX_BYTES = Number(process.env.CACHE_MAX_BYTES || 64 * 1024 * 1024); // 64MB
+const CACHE_MAX_ENTRY_BYTES = Number(process.env.CACHE_MAX_ENTRY_BYTES || 20 * 1024 * 1024); // 20MB per response
+
+const cacheStore = new Map();
+let cacheBytes = 0;
+
+const cacheDel = (key) => {
+  const existing = cacheStore.get(key);
+  if (existing) {
+    cacheBytes -= existing.size || 0;
+    cacheStore.delete(key);
+  }
+};
+
+const cacheGet = (key) => {
+  const entry = cacheStore.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    cacheDel(key);
+    return null;
+  }
+  // Refresh LRU
+  cacheStore.delete(key);
+  cacheStore.set(key, entry);
+  return entry;
+};
+
+const cacheSet = (key, body, ttlMs) => {
+  try {
+    const size = Buffer.byteLength(body || '', 'utf8');
+    if (!size || size > CACHE_MAX_ENTRY_BYTES) return;
+
+    cacheDel(key);
+    cacheStore.set(key, { body, expiresAt: Date.now() + ttlMs, size });
+    cacheBytes += size;
+
+    // Evict LRU
+    while (cacheStore.size > CACHE_MAX_ENTRIES || cacheBytes > CACHE_MAX_BYTES) {
+      const oldestKey = cacheStore.keys().next().value;
+      if (!oldestKey) break;
+      cacheDel(oldestKey);
+    }
+  } catch {
+    // ignore cache failures
+  }
+};
+
+const getXtreamCacheKey = (targetUrl) => {
+  try {
+    const u = new URL(targetUrl);
+    const action = u.searchParams.get('action');
+    if (!action) return null;
+
+    const categoryId = u.searchParams.get('category_id') || '';
+    const seriesId = u.searchParams.get('series_id') || '';
+    const vodId = u.searchParams.get('vod_id') || '';
+    const streamId = u.searchParams.get('stream_id') || '';
+
+    // Key only on params that affect payload; ignore username/password in the URL.
+    return `xtream:${action}:cat=${categoryId}:series=${seriesId}:vod=${vodId}:stream=${streamId}`;
+  } catch {
+    return null;
+  }
+};
+
+const getXtreamTtlMs = (targetUrl) => {
+  try {
+    const u = new URL(targetUrl);
+    const action = u.searchParams.get('action') || '';
+    if (action.includes('categories')) return 60 * 60 * 1000; // 1h
+    if (action === 'get_series_info') return 10 * 60 * 1000;
+    if (action.endsWith('_info')) return 10 * 60 * 1000;
+    if (action === 'get_live_streams' || action === 'get_vod_streams' || action === 'get_series') return 10 * 60 * 1000;
+    return 0;
+  } catch {
+    return 0;
+  }
+};
+
 // CORS totalmente aberto
 app.use(cors());
 
@@ -401,6 +483,20 @@ app.get('/iptv', async (req, res) => {
 
     log('debug', 'iptv.request', { requestId: req.id, targetUrl });
 
+    const cacheKey = getXtreamCacheKey(targetUrl);
+    const ttlMs = cacheKey ? getXtreamTtlMs(targetUrl) : 0;
+
+    if (cacheKey && ttlMs > 0) {
+      const hit = cacheGet(cacheKey);
+      if (hit) {
+        res.status(200);
+        res.set('Content-Type', 'application/json; charset=utf-8');
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('x-cache', 'HIT');
+        return res.send(hit.body);
+      }
+    }
+
     const response = await upstream.get(targetUrl, {
       headers: getHeaders(),
       family: 4, // Força IPv4
@@ -429,7 +525,17 @@ app.get('/iptv', async (req, res) => {
           kind: Array.isArray(parsed) ? 'array' : typeof parsed,
           length: Array.isArray(parsed) ? parsed.length : undefined,
         });
-        res.json(parsed);
+        const body = JSON.stringify(parsed);
+
+        if (cacheKey && ttlMs > 0) {
+          cacheSet(cacheKey, body, ttlMs);
+        }
+
+        res.status(200);
+        res.set('Content-Type', 'application/json; charset=utf-8');
+        res.set('Access-Control-Allow-Origin', '*');
+        if (cacheKey && ttlMs > 0) res.set('x-cache', 'MISS');
+        res.send(body);
       } catch (e) {
         log('warn', 'iptv.json_parse_failed', { requestId: req.id }, e);
         res.set('Access-Control-Allow-Origin', '*');

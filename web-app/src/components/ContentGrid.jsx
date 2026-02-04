@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { Play, Star, Clock } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import useAuthStore from '@store/authStore';
 import SeriesModal from './SeriesModal';
 import { logger } from '@/utils/logger';
@@ -10,6 +10,13 @@ export default function ContentGrid({ items, type, emptyMessage }) {
   const { isAuthenticated } = useAuthStore();
   const [imageErrors, setImageErrors] = useState({});
   const [selectedSeries, setSelectedSeries] = useState(null);
+
+  const PAGE_SIZE = 48;
+  const [visibleCount, setVisibleCount] = useState(() => {
+    const len = Array.isArray(items) ? items.length : 0;
+    return Math.min(PAGE_SIZE, len);
+  });
+  const sentinelRef = useRef(null);
 
   const handlePlay = (item, e) => {
     e?.stopPropagation();
@@ -41,8 +48,48 @@ export default function ContentGrid({ items, type, emptyMessage }) {
     return `https://via.placeholder.com/300x450/1e293b/0ea5e9?text=${encodeURIComponent(title)}`;
   };
 
+  useEffect(() => {
+    // Reset paging when the list changes (category/search).
+    const len = Array.isArray(items) ? items.length : 0;
+    setVisibleCount(Math.min(PAGE_SIZE, len));
+  }, [items]);
+
+  useEffect(() => {
+    if (!items || items.length === 0) {
+      logger.trace('components.contentGrid.empty', { type });
+      return;
+    }
+    logger.trace('components.contentGrid.render', { type, count: items.length });
+  }, [type, items?.length]);
+
+  const hasMore = Array.isArray(items) && visibleCount < items.length;
+  const visibleItems = useMemo(() => {
+    if (!Array.isArray(items)) return [];
+    return items.slice(0, visibleCount);
+  }, [items, visibleCount]);
+
+  useEffect(() => {
+    if (!hasMore) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleCount((c) => {
+            const len = Array.isArray(items) ? items.length : 0;
+            return Math.min(c + PAGE_SIZE, len);
+          });
+        }
+      },
+      { rootMargin: '800px' }
+    );
+
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, items]);
+
   if (!items || items.length === 0) {
-    logger.trace('components.contentGrid.empty', { type });
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <div className="text-6xl mb-4">📺</div>
@@ -51,11 +98,9 @@ export default function ContentGrid({ items, type, emptyMessage }) {
     );
   }
 
-  logger.trace('components.contentGrid.render', { type, count: items.length });
-
   return (
     <div className="grid-responsive">
-      {items.map((item) => (
+      {visibleItems.map((item) => (
         <div
           key={item._id}
           className="group relative bg-dark-900 rounded-lg overflow-hidden card-hover cursor-pointer"
@@ -71,9 +116,10 @@ export default function ContentGrid({ items, type, emptyMessage }) {
               </div>
             ) : (
               <img
-                src={item.poster || item.thumbnail}
+                src={item.poster || item.thumbnail || getPlaceholderImage(item.title)}
                 alt={item.title}
                 loading="lazy"
+                decoding="async"
                 onError={() => handleImageError(item._id)}
                 className="w-full h-full object-cover"
               />
@@ -150,6 +196,10 @@ export default function ContentGrid({ items, type, emptyMessage }) {
           </div>
         </div>
       ))}
+
+      {hasMore && (
+        <div ref={sentinelRef} className="col-span-full h-8" aria-hidden="true" />
+      )}
       
       {/* Series Modal */}
       {selectedSeries && (

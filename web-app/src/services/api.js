@@ -81,7 +81,7 @@ const createIptvClient = () => {
       // Adicionar action e outros params à URL antes de chamar o proxy
       const params = config?.params || {};
       const queryString = Object.keys(params)
-        .filter(key => key !== 'type') // Remover 'type' que não é um parâmetro da API
+        .filter(key => key !== 'type' && key !== 'limit') // Remover params locais (não são da API)
         .map(key => `${key}=${encodeURIComponent(params[key])}`)
         .join('&');
       
@@ -108,6 +108,7 @@ const createIptvClient = () => {
       // Similar para POST se necessário
       const params = config?.params || {};
       const queryString = Object.keys(params)
+        .filter(key => key !== 'type' && key !== 'limit')
         .map(key => `${key}=${encodeURIComponent(params[key])}`)
         .join('&');
       
@@ -249,9 +250,6 @@ export const channelsAPI = {
       if (params?.category) {
         clientParams.category_id = params.category;
       }
-      if (params?.limit) {
-        clientParams.limit = params.limit;
-      }
       return client.get('', { params: clientParams }).then(res => {
         // Transformar resposta Xtream Codes para nosso formato
         // res é a resposta direta do axios (já com .data extraído pelo interceptor)
@@ -268,6 +266,11 @@ export const channelsAPI = {
         }
         
         let streams = Array.isArray(res) ? res : (Array.isArray(res.data) ? res.data : []);
+
+        const total = streams.length;
+        if (params?.limit && Number.isFinite(Number(params.limit))) {
+          streams = streams.slice(0, Number(params.limit));
+        }
 
         logger.debug('channels.getAll.streams', {
           count: streams.length,
@@ -289,7 +292,7 @@ export const channelsAPI = {
           category: stream.category_name,
           isLive: true,
         }));
-        return { channels, total: channels.length, page: 1, limit: 20 };
+        return { channels, total, page: 1, limit: params?.limit ? Number(params.limit) : 20 };
       });
     },
     { channels: mockChannels, total: mockChannels.length, page: 1, limit: 20 }
@@ -368,9 +371,6 @@ export const contentAPI = {
       if (params?.category) {
         clientParams.category_id = params.category;
       }
-      if (params?.limit) {
-        clientParams.limit = params.limit;
-      }
       
       return client.get('', { params: clientParams }).then(res => {
         // Tratar resposta tanto como array direto (proxy) quanto como objeto com data
@@ -388,6 +388,11 @@ export const contentAPI = {
         }
         
         let streams = Array.isArray(res) ? res : (Array.isArray(res.data) ? res.data : []);
+
+        const total = streams.length;
+        if (params?.limit && Number.isFinite(Number(params.limit))) {
+          streams = streams.slice(0, Number(params.limit));
+        }
 
         logger.debug('content.getAll.streams', {
           count: streams.length,
@@ -433,11 +438,11 @@ export const contentAPI = {
             streamUrl: streamUrl,
           };
         });
-        return { 
-          contents, 
-          total: contents.length,
+        return {
+          contents,
+          total,
           page: 1,
-          limit: 20
+          limit: params?.limit ? Number(params.limit) : 20,
         };
       });
     },
@@ -713,52 +718,148 @@ export const historyAPI = {
 };
 
 // Search endpoints com fallback mock
+const SEARCH_INDEX_TTL_MS = 30 * 60 * 1000; // 30 min
+const SEARCH_RESULTS_TTL_MS = 5 * 60 * 1000; // 5 min
+
+let searchIndexState = {
+  key: null,
+  builtAt: 0,
+  movies: [],
+  series: [],
+  building: null,
+};
+
+const searchResultsCache = new Map();
+
+const normalizeSearchQuery = (q) => String(q || '').trim().toLowerCase();
+
+const getSearchIndexKey = () => {
+  const c = getIptvCredentials();
+  if (!c?.apiUrl || !c?.username) return null;
+  // Do not include password; just scope to provider + user.
+  return `${normalizeBaseUrl(c.apiUrl) || c.apiUrl}|${c.username}`;
+};
+
+const ensureSearchIndex = async (client) => {
+  const key = getSearchIndexKey();
+  if (!key) return { movies: [], series: [] };
+
+  const now = Date.now();
+  const isStale = !searchIndexState.builtAt || now - searchIndexState.builtAt > SEARCH_INDEX_TTL_MS;
+  const keyChanged = searchIndexState.key !== key;
+
+  if (!keyChanged && !isStale && searchIndexState.movies.length + searchIndexState.series.length > 0) {
+    return { movies: searchIndexState.movies, series: searchIndexState.series };
+  }
+
+  if (searchIndexState.building && !keyChanged) {
+    return searchIndexState.building;
+  }
+
+  // Reset when credentials/provider changed
+  searchIndexState = {
+    key,
+    builtAt: 0,
+    movies: [],
+    series: [],
+    building: null,
+  };
+  searchResultsCache.clear();
+
+  const buildPromise = Promise.all([
+    client.get('', { params: { action: 'get_vod_streams' } }).catch(() => []),
+    client.get('', { params: { action: 'get_series' } }).catch(() => []),
+  ]).then(([moviesRaw, seriesRaw]) => {
+    const movies = (Array.isArray(moviesRaw) ? moviesRaw : (Array.isArray(moviesRaw?.data) ? moviesRaw.data : []))
+      .map((m) => ({
+        stream_id: m.stream_id,
+        name: m.name,
+        stream_icon: m.stream_icon,
+        cover: m.cover,
+        container_extension: m.container_extension,
+        stream_url: m.stream_url,
+      }))
+      .filter((m) => m.stream_id && m.name);
+
+    const series = (Array.isArray(seriesRaw) ? seriesRaw : (Array.isArray(seriesRaw?.data) ? seriesRaw.data : []))
+      .map((s) => ({
+        series_id: s.series_id,
+        name: s.name,
+        stream_icon: s.stream_icon,
+        cover: s.cover,
+        container_extension: s.container_extension,
+        stream_url: s.stream_url,
+      }))
+      .filter((s) => s.series_id && s.name);
+
+    searchIndexState.movies = movies;
+    searchIndexState.series = series;
+    searchIndexState.builtAt = Date.now();
+    searchIndexState.building = null;
+    return { movies, series };
+  }).catch((err) => {
+    searchIndexState.building = null;
+    throw err;
+  });
+
+  searchIndexState.building = buildPromise;
+  return buildPromise;
+};
+
 export const searchAPI = {
   search: (params) => fetchWithMock(
     (client) => {
-      // Xtream Codes não tem busca nativa. Trazer todo conteúdo e filtrar localmente
-      return Promise.all([
-        client.get('', { params: { action: 'get_vod_streams' } }).catch(() => []),
-        client.get('', { params: { action: 'get_series' } }).catch(() => []),
-      ]).then(([movies, series]) => {
+      const q = normalizeSearchQuery(params?.query);
+      const limit = Number.isFinite(Number(params?.limit)) ? Number(params.limit) : 50;
+      if (!q || q.length < 2) return Promise.resolve({ results: [] });
+
+      const key = getSearchIndexKey() || 'no-key';
+      const cacheKey = `${key}:${q}:${limit}`;
+      const cached = searchResultsCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return Promise.resolve({ results: cached.results });
+      }
+
+      return ensureSearchIndex(client).then(({ movies, series }) => {
         const credentials = getIptvCredentials();
-        let baseUrl = credentials?.apiUrl || 'http://localhost:8000';
-        baseUrl = baseUrl.replace('/player_api.php', '').replace(/\/$/, '');
-        
-        // Filtrar por query
-        const query = (params?.query || '').toLowerCase();
-        
-        const movieList = (Array.isArray(movies) ? movies : (Array.isArray(movies?.data) ? movies.data : []))
-          .filter(m => m.name && m.name.toLowerCase().includes(query))
-          .map(m => {
-          const id = m.stream_id;
-          const extension = m.container_extension || 'm3u8';
-          const streamUrl = m.stream_url || `${baseUrl}/movie/${credentials?.username}/${credentials?.password}/${id}.${extension}`;
-          return {
-            _id: id,
-            title: m.name,
-            poster: m.stream_icon,
-            type: 'movie',
-            streamUrl
-          };
-        });
-        
-        const seriesList = (Array.isArray(series) ? series : (Array.isArray(series?.data) ? series.data : []))
-          .filter(s => s.name && s.name.toLowerCase().includes(query))
-          .map(s => {
-          const id = s.series_id;
-          const extension = s.container_extension || 'm3u8';
-          const streamUrl = s.stream_url || `${baseUrl}/series/${credentials?.username}/${credentials?.password}/${id}.${extension}`;
-          return {
-            _id: id,
-            title: s.name,
-            poster: s.stream_icon,
-            type: 'series',
-            streamUrl
-          };
-        });
-        
-        return { results: [...movieList, ...seriesList] };
+        const baseUrl = normalizeBaseUrl(credentials?.apiUrl) || 'http://localhost:8000';
+
+        const movieList = (movies || [])
+          .filter((m) => m.name && String(m.name).toLowerCase().includes(q))
+          .slice(0, limit)
+          .map((m) => {
+            const id = m.stream_id;
+            const extension = m.container_extension || 'm3u8';
+            const streamUrl = m.stream_url || `${baseUrl}/movie/${credentials?.username}/${credentials?.password}/${id}.${extension}`;
+            return {
+              _id: id,
+              title: m.name,
+              poster: m.cover || m.stream_icon,
+              type: 'movie',
+              streamUrl,
+            };
+          });
+
+        const remaining = Math.max(0, limit - movieList.length);
+        const seriesList = (series || [])
+          .filter((s) => s.name && String(s.name).toLowerCase().includes(q))
+          .slice(0, remaining)
+          .map((s) => {
+            const id = s.series_id;
+            const extension = s.container_extension || 'm3u8';
+            const streamUrl = s.stream_url || `${baseUrl}/series/${credentials?.username}/${credentials?.password}/${id}.${extension}`;
+            return {
+              _id: id,
+              title: s.name,
+              poster: s.cover || s.stream_icon,
+              type: 'series',
+              streamUrl,
+            };
+          });
+
+        const results = [...movieList, ...seriesList];
+        searchResultsCache.set(cacheKey, { results, expiresAt: Date.now() + SEARCH_RESULTS_TTL_MS });
+        return { results };
       });
     },
     {

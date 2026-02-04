@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { channelsAPI, categoriesAPI } from '@services/api';
 import useAppStore from '@store/appStore';
@@ -13,41 +13,104 @@ export default function Live() {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchParams, setSearchParams] = useSearchParams();
+  const channelsCacheRef = useRef(new Map());
   
   const selectedCategory = searchParams.get('category');
-  const { setActiveCategory } = useAppStore();
+  const { setActiveCategory, categoriesCache, updateCategoriesCache } = useAppStore();
+
+  const pickDefaultCategory = (cats) => {
+    const list = Array.isArray(cats) ? cats : [];
+    const preferred = list.find((c) => {
+      const id = String(c?._id ?? '');
+      const name = String(c?.name ?? '').toLowerCase();
+      if (!id) return false;
+      if (id === '0') return false;
+      if (name.includes('all') || name.includes('todos')) return false;
+      return true;
+    });
+    return (preferred?._id ?? list[0]?._id ?? null) || null;
+  };
 
   useEffect(() => {
-    loadData();
-  }, [selectedCategory]);
+    let cancelled = false;
+    const loadCategories = async () => {
+      try {
+        const cachedCats = Array.isArray(categoriesCache?.live) ? categoriesCache.live : null;
 
-  const loadData = async () => {
-    try {
-      setLoading(true);
+        const cats = cachedCats?.length
+          ? cachedCats
+          : (await categoriesAPI.getAll({ type: 'live' }))?.categories || [];
 
-      // Carrega categorias e canais em paralelo
-      const [categoriesRes, channelsRes] = await Promise.all([
-        categoriesAPI.getAll({ type: 'live' }),
-        channelsAPI.getAll({ 
+        if (cancelled) return;
+
+        setCategories(cats);
+        if (!cachedCats?.length) updateCategoriesCache?.('live', cats);
+
+        if (!selectedCategory) {
+          const fallback = pickDefaultCategory(cats);
+          if (fallback) {
+            setSearchParams({ category: fallback }, { replace: true });
+            setActiveCategory(fallback);
+            return;
+          }
+        }
+
+        setLoading(false);
+      } catch (error) {
+        logger.error('pages.live.categories_load_failed', undefined, error);
+        toast.error('Erro ao carregar categorias');
+        setLoading(false);
+      }
+    };
+
+    loadCategories();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadChannels = async () => {
+      try {
+        if (!selectedCategory) return;
+        setLoading(true);
+
+        const cached = channelsCacheRef.current.get(String(selectedCategory));
+        if (cached) {
+          setChannels(cached);
+          setLoading(false);
+          return;
+        }
+
+        const channelsRes = await channelsAPI.getAll({
           category: selectedCategory,
-          limit: 100 
-        })
-      ]);
+          limit: 100,
+        });
+        if (cancelled) return;
 
-      logger.debug('pages.live.data_loaded', {
-        categories: categoriesRes?.categories?.length,
-        channels: channelsRes?.channels?.length,
-        selectedCategory,
-      });
-      setCategories(categoriesRes?.categories || []);
-      setChannels(channelsRes?.channels || []);
-    } catch (error) {
-      logger.error('pages.live.load_failed', { selectedCategory }, error);
-      toast.error('Erro ao carregar canais');
-    } finally {
-      setLoading(false);
-    }
-  };
+        const list = channelsRes?.channels || [];
+        channelsCacheRef.current.set(String(selectedCategory), list);
+
+        logger.debug('pages.live.data_loaded', {
+          channels: list.length,
+          selectedCategory,
+        });
+        setChannels(list);
+      } catch (error) {
+        logger.error('pages.live.load_failed', { selectedCategory }, error);
+        toast.error('Erro ao carregar canais');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    loadChannels();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCategory]);
 
   const handleCategoryChange = (categoryId) => {
     if (categoryId) {

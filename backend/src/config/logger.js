@@ -67,7 +67,16 @@ const stream = {
 
 morgan.token('rid', (req) => req.id || '-');
 
+const sanitizeUrl = (url) => {
+  if (!url) return url;
+  return String(url)
+    .replace(/([?&](?:token|access_token|authorization)=)([^&]+)/gi, '$1[REDACTED]')
+    .replace(/([?&](?:password|pass)=)([^&]+)/gi, '$1[REDACTED]');
+};
+
+morgan.token('surl', (req) => sanitizeUrl(req.originalUrl || req.url));
+
 export const morganMiddleware = morgan(
-  ':rid :remote-addr :method :url :status :res[content-length] - :response-time ms',
+  ':rid :remote-addr :method :surl :status :res[content-length] - :response-time ms',
   { stream }
 );
