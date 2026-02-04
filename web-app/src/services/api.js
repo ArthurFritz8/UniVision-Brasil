@@ -487,9 +487,9 @@ export const contentAPI = {
       logger.debug('content.getById.raw', { id, type: typeof res });
       
       // Tratar resposta - pode ser um objeto direto ou com .data
-      const info = (res && typeof res === 'object') 
-        ? (res.info || res) 
-        : res;
+      const payload = res?.data ?? res;
+      const info = (payload && typeof payload === 'object') ? (payload.info || payload) : payload;
+      const movieData = (payload && typeof payload === 'object') ? (payload.movie_data || payload.movieData || null) : null;
       
       const credentials = getIptvCredentials();
       let baseUrl = credentials?.apiUrl || 'http://localhost:8000';
@@ -497,19 +497,41 @@ export const contentAPI = {
       // Remover /player_api.php se existir na URL base
       baseUrl = baseUrl.replace('/player_api.php', '').replace(/\/$/, '');
       
-      let streamUrl = info.stream_url;
+      let streamUrl = info?.stream_url;
       if (!streamUrl) {
-        streamUrl = `${baseUrl}/movie/${credentials?.username}/${credentials?.password}/${id}.m3u8`;
+        const ext = info?.container_extension || movieData?.container_extension || 'm3u8';
+        streamUrl = `${baseUrl}/movie/${credentials?.username}/${credentials?.password}/${id}.${ext}`;
       }
+
+      const genreRaw = info?.genre || movieData?.genre;
+      const genre = typeof genreRaw === 'string'
+        ? genreRaw.split(',').map((g) => g.trim()).filter(Boolean)
+        : Array.isArray(genreRaw)
+          ? genreRaw
+          : null;
+
+      const durationSecs = Number(info?.duration_secs || movieData?.duration_secs || 0);
+      const duration = durationSecs > 0 ? Math.round(durationSecs / 60) : (info?.duration || movieData?.duration || null);
+
+      const description =
+        info?.plot ||
+        info?.description ||
+        movieData?.plot ||
+        movieData?.description ||
+        null;
       
       return { 
         content: {
-          _id: info.stream_id || id,
-          title: info.name,
-          poster: info.stream_icon || info.cover,
-          description: info.plot,
-          year: info.releaseDate,
-          rating: info.rating,
+          _id: info?.stream_id || movieData?.stream_id || id,
+          title: info?.name || movieData?.name,
+          poster: info?.stream_icon || info?.cover || movieData?.stream_icon || movieData?.cover,
+          description,
+          year: info?.releaseDate || movieData?.releaseDate || info?.year || movieData?.year,
+          rating: info?.rating || movieData?.rating,
+          duration,
+          metadata: {
+            genre: genre || undefined,
+          },
           streamUrl: streamUrl,
         }
       };

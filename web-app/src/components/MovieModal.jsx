@@ -3,12 +3,27 @@ import { X, Play, Star, Clock, Calendar } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { logger } from '@/utils/logger';
+import { contentAPI } from '@/services/api';
 
 export default function MovieModal({ movie, onClose }) {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
+  const [details, setDetails] = useState(null);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
-  const description = String(movie?.description || '').trim();
+  const mergedMovie = useMemo(() => {
+    if (!details) return movie;
+    return {
+      ...movie,
+      ...details,
+      metadata: {
+        ...(movie?.metadata || {}),
+        ...(details?.metadata || {}),
+      },
+    };
+  }, [movie, details]);
+
+  const description = String(mergedMovie?.description || '').trim();
   const hasLongDescription = description.length > 180;
 
   const yearLabel = useMemo(() => {
@@ -25,9 +40,41 @@ export default function MovieModal({ movie, onClose }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
+  useEffect(() => {
+    let isAlive = true;
+
+    const id = mergedMovie?._id;
+    if (!id) return undefined;
+
+    const hasSynopsis = Boolean(String(mergedMovie?.description || '').trim());
+    if (hasSynopsis) return undefined;
+
+    setIsLoadingDetails(true);
+    contentAPI
+      .getById(id)
+      .then((res) => {
+        const content = res?.content || res?.data?.content || null;
+        if (!isAlive) return;
+        if (content && typeof content === 'object') {
+          setDetails(content);
+          logger.debug('movieModal.details_loaded', { id });
+        }
+      })
+      .catch((error) => {
+        logger.warn('movieModal.details_failed', { id, message: error?.message }, error);
+      })
+      .finally(() => {
+        if (isAlive) setIsLoadingDetails(false);
+      });
+
+    return () => {
+      isAlive = false;
+    };
+  }, [mergedMovie?._id]);
+
   const handlePlay = () => {
     try {
-      if (!movie?._id || !movie?.streamUrl) {
+      if (!mergedMovie?._id || !mergedMovie?.streamUrl) {
         toast.error('Stream indisponível');
         return;
       }
@@ -35,19 +82,19 @@ export default function MovieModal({ movie, onClose }) {
       sessionStorage.setItem(
         'currentItem',
         JSON.stringify({
-          id: movie._id,
+          id: mergedMovie._id,
           type: 'movie',
-          streamUrl: movie.streamUrl,
-          title: movie.title,
-          logo: movie.poster,
+          streamUrl: mergedMovie.streamUrl,
+          title: mergedMovie.title,
+          logo: mergedMovie.poster,
         })
       );
 
-      logger.debug('movieModal.play', { id: movie?._id, title: movie?.title });
-      navigate(`/player/content/${movie._id}`);
+      logger.debug('movieModal.play', { id: mergedMovie?._id, title: mergedMovie?.title });
+      navigate(`/player/content/${mergedMovie._id}`);
       onClose?.();
     } catch (error) {
-      logger.error('movieModal.play_failed', { id: movie?._id }, error);
+      logger.error('movieModal.play_failed', { id: mergedMovie?._id }, error);
       toast.error('Erro ao iniciar reprodução');
     }
   };
@@ -63,7 +110,7 @@ export default function MovieModal({ movie, onClose }) {
         {/* Header */}
         <div className="sticky top-0 bg-gradient-to-b from-dark-800 to-transparent p-6 flex items-start justify-between border-b border-dark-700">
           <div className="flex-1 pr-4">
-            <h2 className="text-2xl font-bold mb-2">{movie?.title}</h2>
+            <h2 className="text-2xl font-bold mb-2">{mergedMovie?.title}</h2>
 
             {description ? (
               <div className="text-gray-400">
@@ -78,6 +125,8 @@ export default function MovieModal({ movie, onClose }) {
                   </button>
                 )}
               </div>
+            ) : isLoadingDetails ? (
+              <p className="text-gray-500">Carregando sinopse...</p>
             ) : (
               <p className="text-gray-500">Sem sinopse disponível.</p>
             )}
@@ -97,10 +146,10 @@ export default function MovieModal({ movie, onClose }) {
           <div className="flex flex-col md:flex-row gap-6">
             <div className="w-full md:w-64 flex-shrink-0">
               <div className="aspect-[2/3] bg-dark-900 rounded-lg overflow-hidden">
-                {movie?.poster ? (
+                {mergedMovie?.poster ? (
                   <img
-                    src={movie.poster}
-                    alt={movie.title}
+                    src={mergedMovie.poster}
+                    alt={mergedMovie.title}
                     loading="lazy"
                     decoding="async"
                     referrerPolicy="no-referrer"
@@ -123,24 +172,24 @@ export default function MovieModal({ movie, onClose }) {
                   </div>
                 )}
 
-                {movie?.duration && (
+                {mergedMovie?.duration && (
                   <div className="flex items-center gap-2">
                     <Clock size={16} className="text-primary-400" />
-                    <span>{movie.duration}min</span>
+                    <span>{mergedMovie.duration}min</span>
                   </div>
                 )}
 
-                {(movie?.metadata?.rating?.imdb || movie?.rating) && (
+                {(mergedMovie?.metadata?.rating?.imdb || mergedMovie?.rating) && (
                   <div className="flex items-center gap-2">
                     <Star size={16} className="text-yellow-500 fill-yellow-500" />
-                    <span>{movie?.metadata?.rating?.imdb || movie?.rating}</span>
+                    <span>{mergedMovie?.metadata?.rating?.imdb || mergedMovie?.rating}</span>
                   </div>
                 )}
               </div>
 
-              {Array.isArray(movie?.metadata?.genre) && movie.metadata.genre.length > 0 && (
+              {Array.isArray(mergedMovie?.metadata?.genre) && mergedMovie.metadata.genre.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-6">
-                  {movie.metadata.genre.slice(0, 6).map((g, idx) => (
+                  {mergedMovie.metadata.genre.slice(0, 6).map((g, idx) => (
                     <span
                       key={`${g}-${idx}`}
                       className="text-xs bg-dark-700 px-3 py-1 rounded-full text-gray-200"
@@ -161,16 +210,16 @@ export default function MovieModal({ movie, onClose }) {
                   <span>Assistir</span>
                 </button>
 
-                {movie?.isPremium && (
+                {mergedMovie?.isPremium && (
                   <div className="flex items-center text-xs font-bold bg-yellow-500 text-black px-3 py-2 rounded">
                     PREMIUM
                   </div>
                 )}
               </div>
 
-              {movie?.category && (
+              {mergedMovie?.category && (
                 <div className="mt-6 text-sm text-gray-400">
-                  Categoria: <span className="text-gray-200">{movie.category}</span>
+                  Categoria: <span className="text-gray-200">{mergedMovie.category}</span>
                 </div>
               )}
             </div>
