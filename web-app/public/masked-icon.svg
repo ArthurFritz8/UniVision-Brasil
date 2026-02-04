@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="UniVision Maskable">
+  <!-- Maskable icon: full-bleed background, safe area center mark -->
+  <rect width="512" height="512" fill="#0f0f1e"/>
+  <path d="M128 176v120c0 72 56 128 128 128s128-56 128-128V176h-72v120c0 31.8-24.2 56-56 56s-56-24.2-56-56V176h-72z" fill="#22d3ee"/>
+</svg>

@@ -15,9 +15,12 @@ dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
 dns.setDefaultResultOrder('ipv4first');
 
 const app = express();
-const PORT = 3101;
+const PORT = Number(process.env.PORT || 3101);
 
 app.disable('x-powered-by');
+// When hosted behind a reverse proxy (Render), honor x-forwarded-* headers
+// so req.protocol is https when the public URL is https.
+app.set('trust proxy', true);
 
 // Reutiliza conexões TCP (melhora latência e reduz overhead)
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 256 });
