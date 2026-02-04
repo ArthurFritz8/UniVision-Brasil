@@ -4,8 +4,10 @@ import { Play, TrendingUp, Clock } from 'lucide-react';
 import { channelsAPI, contentAPI, categoriesAPI } from '@services/api';
 import useAuthStore from '@store/authStore';
 import { logger } from '@/utils/logger';
+import MovieModal from '@components/MovieModal';
 
 export default function Home() {
+  const [selectedMovie, setSelectedMovie] = useState(null);
   const [featured, setFeatured] = useState([]);
   const [popularChannels, setPopularChannels] = useState([]);
   const [recentMovies, setRecentMovies] = useState([]);
@@ -170,10 +172,11 @@ export default function Home() {
         </div>
         <div className="grid-responsive">
           {recentMovies.slice(0, 6).map((movie) => (
-            <Link
+            <button
               key={movie._id}
-              to={`/player/content/${movie._id}`}
-              className="card-hover"
+              type="button"
+              onClick={() => setSelectedMovie(movie)}
+              className="card-hover text-left"
             >
               <div className="aspect-[2/3] bg-dark-800 rounded-lg overflow-hidden">
                 <img
@@ -183,10 +186,14 @@ export default function Home() {
                 />
               </div>
               <h3 className="mt-2 font-semibold line-clamp-2">{movie.title}</h3>
-            </Link>
+            </button>
           ))}
         </div>
       </section>
+
+      {selectedMovie && (
+        <MovieModal movie={selectedMovie} onClose={() => setSelectedMovie(null)} />
+      )}
     </div>
   );
 }

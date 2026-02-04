@@ -11,6 +11,10 @@ export default function SeriesModal({ series, onClose }) {
   const [selectedSeason, setSelectedSeason] = useState(null);
   const [episodes, setEpisodes] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [synopsisExpanded, setSynopsisExpanded] = useState(false);
+
+  const synopsis = String(series?.description || '').trim();
+  const canExpandSynopsis = synopsis.length > 180;
 
   useEffect(() => {
     loadSeasons();
@@ -109,7 +113,22 @@ export default function SeriesModal({ series, onClose }) {
         <div className="sticky top-0 bg-gradient-to-b from-dark-800 to-transparent p-6 flex items-start justify-between border-b border-dark-700">
           <div className="flex-1">
             <h2 className="text-2xl font-bold mb-2">{series.title}</h2>
-            <p className="text-gray-400 line-clamp-2">{series.description}</p>
+            {synopsis ? (
+              <div className="text-gray-400">
+                <p className={synopsisExpanded ? '' : 'line-clamp-2'}>{synopsis}</p>
+                {canExpandSynopsis && (
+                  <button
+                    type="button"
+                    onClick={() => setSynopsisExpanded((v) => !v)}
+                    className="mt-2 text-primary-400 hover:text-primary-300 text-sm font-semibold"
+                  >
+                    {synopsisExpanded ? 'Ver menos' : 'Ver mais'}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="text-gray-500">Sem sinopse disponível.</p>
+            )}
           </div>
           <button
             onClick={onClose}

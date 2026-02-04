@@ -3,6 +3,7 @@ import { Play, Star, Clock } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import useAuthStore from '@store/authStore';
 import SeriesModal from './SeriesModal';
+import MovieModal from './MovieModal';
 import { logger } from '@/utils/logger';
 
 export default function ContentGrid({ items, type, emptyMessage }) {
@@ -10,6 +11,7 @@ export default function ContentGrid({ items, type, emptyMessage }) {
   const { isAuthenticated } = useAuthStore();
   const [imageErrors, setImageErrors] = useState({});
   const [selectedSeries, setSelectedSeries] = useState(null);
+  const [selectedMovie, setSelectedMovie] = useState(null);
 
   const PAGE_SIZE = 48;
   const [visibleCount, setVisibleCount] = useState(() => {
@@ -18,26 +20,64 @@ export default function ContentGrid({ items, type, emptyMessage }) {
   });
   const sentinelRef = useRef(null);
 
-  const handlePlay = (item, e) => {
-    e?.stopPropagation();
-    
-    // Se for série, abrir modal
-    if (type === 'series') {
+  const playNow = (item, itemKind, e) => {
+    e?.stopPropagation?.();
+
+    // Series needs episode selection
+    if (itemKind === 'series') {
       setSelectedSeries(item);
       return;
     }
-    
-    // Salvar informações do item no sessionStorage para o player recuperar
-    sessionStorage.setItem('currentItem', JSON.stringify({
-      id: item._id,
-      type: type === 'channel' ? 'live' : type,
-      streamUrl: item.streamUrl,
-      title: item.title,
-      logo: item.poster || item.logo,
-    }));
-    
-    const itemType = type === 'channel' ? 'channel' : 'content';
-    navigate(`/player/${itemType}/${item._id}`);
+
+    if (itemKind === 'movie') {
+      sessionStorage.setItem(
+        'currentItem',
+        JSON.stringify({
+          id: item._id,
+          type: 'movie',
+          streamUrl: item.streamUrl,
+          title: item.title,
+          logo: item.poster || item.logo,
+        })
+      );
+      navigate(`/player/content/${item._id}`);
+      return;
+    }
+
+    // Channel/live
+    sessionStorage.setItem(
+      'currentItem',
+      JSON.stringify({
+        id: item._id,
+        type: 'live',
+        streamUrl: item.streamUrl,
+        title: item.title,
+        logo: item.poster || item.logo,
+      })
+    );
+    navigate(`/player/channel/${item._id}`);
+  };
+
+  const openDetails = (item, e) => {
+    e?.stopPropagation?.();
+
+    const inferred =
+      type === 'mixed'
+        ? String(item?.type || '').toLowerCase()
+        : String(type || '').toLowerCase();
+
+    if (inferred === 'series') {
+      setSelectedSeries(item);
+      return;
+    }
+
+    if (inferred === 'movie' || inferred === 'content') {
+      setSelectedMovie(item);
+      return;
+    }
+
+    // Channels: keep the fast path
+    playNow(item, 'channel', e);
   };
 
   const handleImageError = (itemId) => {
@@ -127,7 +167,7 @@ export default function ContentGrid({ items, type, emptyMessage }) {
         <div
           key={item._id}
           className="group relative bg-dark-900 rounded-lg overflow-hidden card-hover cursor-pointer"
-          onClick={() => handlePlay(item)}
+          onClick={(e) => openDetails(item, e)}
         >
           {/* Thumbnail */}
           <div
@@ -162,7 +202,20 @@ export default function ContentGrid({ items, type, emptyMessage }) {
             {/* Overlay on hover */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end">
               <div className="p-4 w-full">
-                <button className="btn-primary w-full flex items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    const inferred =
+                      type === 'mixed'
+                        ? String(item?.type || '').toLowerCase()
+                        : String(type || '').toLowerCase();
+
+                    if (inferred === 'series') return openDetails(item, e);
+                    if (inferred === 'movie' || inferred === 'content') return playNow(item, 'movie', e);
+                    return playNow(item, 'channel', e);
+                  }}
+                  className="btn-primary w-full flex items-center justify-center gap-2"
+                >
                   <Play size={18} />
                   <span>Assistir</span>
                 </button>
@@ -241,6 +294,11 @@ export default function ContentGrid({ items, type, emptyMessage }) {
           series={selectedSeries} 
           onClose={() => setSelectedSeries(null)}
         />
+      )}
+
+      {/* Movie Modal */}
+      {selectedMovie && (
+        <MovieModal movie={selectedMovie} onClose={() => setSelectedMovie(null)} />
       )}
     </div>
   );
