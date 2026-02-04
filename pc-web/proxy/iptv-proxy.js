@@ -113,14 +113,25 @@ const log = (levelName, message, meta, error) => {
 };
 
 const isUpstreamNetworkError = (err) => {
-  const code = err?.code;
+  const code = err?.code || err?.cause?.code;
+  const message = String(err?.message || '').toLowerCase();
   return (
     code === 'ECONNABORTED' ||
     code === 'ETIMEDOUT' ||
     code === 'ECONNRESET' ||
     code === 'EAI_AGAIN' ||
     code === 'ENOTFOUND' ||
-    code === 'ECONNREFUSED'
+    code === 'ECONNREFUSED' ||
+    // TLS/cert issues (common with IPTV providers or image hosts)
+    code === 'ERR_TLS_CERT_ALTNAME_INVALID' ||
+    code === 'CERT_HAS_EXPIRED' ||
+    code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+    code === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
+    code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
+    code === 'ERR_SSL_WRONG_VERSION_NUMBER' ||
+    code === 'EPROTO' ||
+    message.includes('certificate') ||
+    message.includes('self signed')
   );
 };
 
@@ -331,8 +342,11 @@ app.get('/img', async (req, res) => {
 
     response.data.pipe(res);
   } catch (error) {
-    log('warn', 'img.proxy_failed', { requestId: req.id, imageUrl }, error);
-    res.status(500).end();
+    const networkish = isUpstreamNetworkError(error);
+    const code = error?.code;
+
+    log(networkish ? 'warn' : 'error', 'img.proxy_failed', { requestId: req.id, imageUrl, code }, error);
+    res.status(networkish ? 504 : 500).end();
   }
 });
 
@@ -385,40 +399,99 @@ const rewriteM3u8 = ({ playlistText, playlistUrl, proxyBaseUrl }) => {
 
 // Proxy para HLS playlists (.m3u8) com reescrita de URLs (segmentos, sub-playlists, keys)
 app.get('/hls', async (req, res) => {
-  try {
-    const playlistUrl = req.query.url;
+  const playlistUrl = req.query.url;
 
+  try {
     if (!playlistUrl) {
       return res.status(400).json({ error: 'URL não fornecida' });
     }
 
-    log('debug', 'hls.playlist', { requestId: req.id, playlistUrl });
+    let parsed;
+    try {
+      parsed = new URL(String(playlistUrl));
+    } catch {
+      return res.status(400).json({ error: 'URL inválida' });
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return res.status(400).json({ error: 'Protocolo inválido' });
+    }
 
-    const response = await upstream.get(playlistUrl, {
-      headers: {
-        ...getHeaders(),
-        Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
-      },
-      responseType: 'text',
-      transformResponse: (r) => r,
-    });
+    const buildCandidateUrls = (rawUrl) => {
+      try {
+        const u = new URL(String(rawUrl));
+        const urls = [u.toString()];
+
+        if (u.protocol === 'http:') {
+          const httpsUrl = new URL(u.toString());
+          httpsUrl.protocol = 'https:';
+          urls.push(httpsUrl.toString());
+        } else if (u.protocol === 'https:') {
+          const httpUrl = new URL(u.toString());
+          httpUrl.protocol = 'http:';
+          urls.push(httpUrl.toString());
+        }
+        return urls;
+      } catch {
+        return [String(rawUrl)];
+      }
+    };
+
+    const fetchOnce = (url) =>
+      upstream.get(url, {
+        headers: {
+          ...getHeaders(),
+          Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
+        },
+        responseType: 'arraybuffer',
+      });
+
+    const candidates = buildCandidateUrls(parsed.toString());
+    let response = null;
+    let lastError = null;
+
+    for (let i = 0; i < candidates.length; i++) {
+      const candidateUrl = candidates[i];
+      try {
+        if (i > 0) {
+          log('warn', 'hls.retry_candidate', { requestId: req.id, from: playlistUrl, to: candidateUrl });
+        }
+
+        const r = await fetchOnce(candidateUrl);
+        response = r;
+
+        if (r.status < 400) break;
+
+        const retryableStatus = r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
+        if (!retryableStatus || i === candidates.length - 1) break;
+      } catch (err) {
+        lastError = err;
+        const networkish = isUpstreamNetworkError(err);
+        if (!networkish || i === candidates.length - 1) throw err;
+      }
+    }
+
+    if (!response) {
+      throw lastError || new Error('No upstream response');
+    }
 
     if (response.status >= 400) {
       log('warn', 'hls.upstream_http_error', { requestId: req.id, status: response.status, playlistUrl });
-      return res
-        .status(response.status)
-        .send(response.data || `Erro ao buscar playlist (requestId: ${req.id})`);
+      res.status(response.status);
+      res.set('Access-Control-Allow-Origin', '*');
+      return res.send(`Erro ao buscar playlist (status ${response.status}, requestId: ${req.id})`);
     }
 
     // URL final após redirects (quando disponível)
     const finalUrl =
       response?.request?.res?.responseUrl ||
       response?.request?._redirectable?._currentUrl ||
+      response?.config?.url ||
       playlistUrl;
 
     const proxyBaseUrl = getProxyBaseUrl(req);
+    const playlistText = Buffer.from(response.data).toString('utf8');
     const rewritten = rewriteM3u8({
-      playlistText: typeof response.data === 'string' ? response.data : String(response.data ?? ''),
+      playlistText,
       playlistUrl: finalUrl,
       proxyBaseUrl,
     });
@@ -431,7 +504,26 @@ app.get('/hls', async (req, res) => {
     res.set('Access-Control-Allow-Headers', 'Content-Type, Range');
     res.send(rewritten);
   } catch (error) {
-    log('error', 'hls.proxy_failed', { requestId: req.id, playlistUrl: req.query.url }, error);
+    const networkish = isUpstreamNetworkError(error);
+    const code = error?.code;
+
+    if (networkish) {
+      log(
+        'warn',
+        'hls.upstream_unreachable',
+        { requestId: req.id, code, playlistUrl },
+        { name: error?.name, message: error?.message, code }
+      );
+      return res.status(504).json({
+        error: 'Upstream indisponível',
+        message: error?.message,
+        code,
+        url: playlistUrl,
+        requestId: req.id,
+      });
+    }
+
+    log('error', 'hls.proxy_failed', { requestId: req.id, playlistUrl }, error);
     res.status(500).json({ error: error.message, requestId: req.id });
   }
 });

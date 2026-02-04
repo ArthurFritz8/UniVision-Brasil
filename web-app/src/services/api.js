@@ -447,13 +447,13 @@ export const contentAPI = {
           }
           
           // Preferir cover (TMDB) sobre stream_icon
-          const poster = stream.cover || stream.stream_icon;
+          const poster = proxyImageUrl(stream.cover || stream.stream_icon);
           
           return {
             _id: stream.stream_id || stream.series_id || stream.id,
             title: stream.name,
             poster: poster,
-            backdrop: stream.backdrop_path?.[0] || stream.cover,
+            backdrop: proxyImageUrl(stream.backdrop_path?.[0] || stream.cover),
             description: stream.plot || stream.description,
             year: stream.releaseDate || stream.year,
             rating: stream.rating || 0,
@@ -520,12 +520,14 @@ export const contentAPI = {
         movieData?.plot ||
         movieData?.description ||
         null;
+
+      const posterRaw = info?.stream_icon || info?.cover || movieData?.stream_icon || movieData?.cover;
       
       return { 
         content: {
           _id: info?.stream_id || movieData?.stream_id || id,
           title: info?.name || movieData?.name,
-          poster: info?.stream_icon || info?.cover || movieData?.stream_icon || movieData?.cover,
+          poster: proxyImageUrl(posterRaw),
           description,
           year: info?.releaseDate || movieData?.releaseDate || info?.year || movieData?.year,
           rating: info?.rating || movieData?.rating,
@@ -972,7 +974,7 @@ export const searchAPI = {
             return {
               _id: id,
               title: m.name,
-              poster: m.cover || m.stream_icon,
+              poster: proxyImageUrl(m.cover || m.stream_icon),
               type: 'movie',
               streamUrl,
             };
@@ -989,7 +991,7 @@ export const searchAPI = {
             return {
               _id: id,
               title: s.name,
-              poster: s.cover || s.stream_icon,
+              poster: proxyImageUrl(s.cover || s.stream_icon),
               type: 'series',
               streamUrl,
             };
