@@ -48,7 +48,66 @@ const detectKindFromBytes = (bytes, contentType) => {
   return 'unknown';
 };
 
-const probeStreamKindViaProxy = async ({ originalUrl, timeoutMs = 3500 }) => {
+const safeDecodeText = (bytes, maxChars = 600) => {
+  if (!bytes || bytes.length === 0) return '';
+  try {
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    const trimmed = text.replace(/^\uFEFF/, '').trim();
+    return trimmed.slice(0, maxChars);
+  } catch {
+    return '';
+  }
+};
+
+const copyToClipboard = async (text) => {
+  const value = String(text || '').trim();
+  if (!value) return false;
+
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // fall through to legacy
+  }
+
+  try {
+    const el = document.createElement('textarea');
+    el.value = value;
+    el.setAttribute('readonly', '');
+    el.style.position = 'absolute';
+    el.style.left = '-9999px';
+    document.body.appendChild(el);
+    el.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(el);
+    return !!ok;
+  } catch {
+    return false;
+  }
+};
+
+const openInVlcAndroid = (url) => {
+  const target = String(url || '').trim();
+  if (!target) return false;
+
+  const ua = String(navigator?.userAgent || '').toLowerCase();
+  const isAndroid = ua.includes('android');
+  if (!isAndroid) return false;
+
+  // Best-effort Android intent for VLC
+  // Note: Not all browsers/devices handle intent URLs the same way.
+  const intentUrl = `intent://${encodeURIComponent(target)}#Intent;scheme=https;package=org.videolan.vlc;end`;
+  try {
+    window.location.href = intentUrl;
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const probeStreamViaProxy = async ({ originalUrl, timeoutMs = 3500 }) => {
   // Fetch a small chunk via /stream (no CORS issues) and inspect headers/body.
   const probeUrl = `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(originalUrl)}`;
 
@@ -65,9 +124,17 @@ const probeStreamKindViaProxy = async ({ originalUrl, timeoutMs = 3500 }) => {
 
     const contentType = res.headers.get('content-type') || '';
 
+    let bytes = null;
+    let snippet = '';
+
     // Some servers respond with playlists but without body streaming support.
     if (!res.body) {
-      return detectKindFromBytes(null, contentType);
+      return {
+        kind: detectKindFromBytes(null, contentType),
+        status: res.status,
+        contentType,
+        snippet,
+      };
     }
 
     const reader = res.body.getReader();
@@ -78,11 +145,23 @@ const probeStreamKindViaProxy = async ({ originalUrl, timeoutMs = 3500 }) => {
       // ignore
     }
 
-    const bytes = value ? new Uint8Array(value) : null;
-    return detectKindFromBytes(bytes, contentType);
+    bytes = value ? new Uint8Array(value) : null;
+    snippet = safeDecodeText(bytes);
+    return {
+      kind: detectKindFromBytes(bytes, contentType),
+      status: res.status,
+      contentType,
+      snippet,
+    };
   } catch (err) {
     logger.warn('player.stream.probe_failed', { message: err?.message });
-    return 'unknown';
+    return {
+      kind: 'unknown',
+      status: null,
+      contentType: '',
+      snippet: '',
+      errorMessage: err?.message,
+    };
   } finally {
     clearTimeout(t);
   }
@@ -95,6 +174,10 @@ export default function Player() {
   const [error, setError] = useState(null);
   const [streamUrl, setStreamUrl] = useState(null);
   const [streamKind, setStreamKind] = useState('auto');
+  const [originalStreamUrl, setOriginalStreamUrl] = useState(null);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugInfo, setDebugInfo] = useState(null);
+  const [actionMsg, setActionMsg] = useState(null);
 
   useEffect(() => {
     const loadStream = async () => {
@@ -139,13 +222,14 @@ export default function Player() {
         const isTsUrl = /\.ts(\?|$)/i.test(url);
 
         let kind = isHlsUrl ? 'hls' : (isTsUrl ? 'ts' : 'auto');
+        let probe = null;
 
         // Alguns provedores retornam HLS sem extensão (ex: .php, sem .m3u8).
         // Para evitar usar o modo errado e disparar player.video.error, fazemos um probe rápido via proxy.
         if (type === 'live' && kind === 'auto') {
-          const detected = await probeStreamKindViaProxy({ originalUrl: url });
-          if (detected === 'hls' || detected === 'ts') {
-            kind = detected;
+          probe = await probeStreamViaProxy({ originalUrl: url });
+          if (probe?.kind === 'hls' || probe?.kind === 'ts') {
+            kind = probe.kind;
           }
         }
 
@@ -165,6 +249,15 @@ export default function Player() {
         
         setStreamUrl(proxyStreamUrl);
         setStreamKind(kind === 'auto' ? 'direct' : kind);
+        setOriginalStreamUrl(url);
+        setDebugInfo({
+          type,
+          id,
+          kind,
+          originalUrl: url,
+          proxyUrl: proxyStreamUrl,
+          probe,
+        });
         setLoading(false);
       } catch (err) {
         logger.error('player.load_stream_failed', { type, id }, err);
@@ -315,6 +408,15 @@ export default function Player() {
       });
       setError(`${mediaErrorMessage(video)} (Código: ${video.error?.code ?? 'n/a'})`);
       setLoading(false);
+      setDebugInfo((prev) => ({
+        ...(prev || {}),
+        mediaError: {
+          code: video.error?.code,
+          message: video.error?.message,
+          networkState: video.networkState,
+          readyState: video.readyState,
+        },
+      }));
     };
 
     video.addEventListener('error', onError);
@@ -375,6 +477,96 @@ export default function Player() {
           <div className="absolute inset-0 flex items-center justify-center bg-dark-900/80 z-40">
             <div className="text-center">
               <p className="text-red-400 mb-4">{error}</p>
+
+              {actionMsg && (
+                <p className="text-gray-300 mb-3 text-sm">{actionMsg}</p>
+              )}
+
+              <div className="flex flex-wrap gap-2 justify-center mb-4">
+                <button
+                  onClick={async () => {
+                    const ok = await copyToClipboard(streamUrl);
+                    setActionMsg(ok ? 'Link do proxy copiado.' : 'Não foi possível copiar o link.');
+                    setTimeout(() => setActionMsg(null), 3000);
+                  }}
+                  className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg transition-colors"
+                >
+                  Copiar link (proxy)
+                </button>
+
+                <button
+                  onClick={async () => {
+                    const ok = await copyToClipboard(originalStreamUrl);
+                    setActionMsg(ok ? 'Link original copiado.' : 'Não foi possível copiar o link original.');
+                    setTimeout(() => setActionMsg(null), 3000);
+                  }}
+                  className="px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white rounded-lg transition-colors"
+                >
+                  Copiar link (original)
+                </button>
+
+                <button
+                  onClick={() => {
+                    const ok = openInVlcAndroid(originalStreamUrl || streamUrl);
+                    setActionMsg(ok ? 'Tentando abrir no VLC…' : 'No Android, instale o VLC e use “Copiar link”.');
+                    setTimeout(() => setActionMsg(null), 3500);
+                  }}
+                  className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
+                >
+                  Abrir no VLC
+                </button>
+              </div>
+
+              <button
+                onClick={() => setDebugOpen(v => !v)}
+                className="px-4 py-2 bg-dark-800 hover:bg-dark-700 text-white rounded-lg transition-colors mb-3"
+              >
+                {debugOpen ? 'Ocultar diagnóstico' : 'Mostrar diagnóstico'}
+              </button>
+
+              {debugOpen && (
+                <div className="max-w-3xl mx-auto text-left bg-dark-950/60 border border-dark-700 rounded-lg p-3 mb-4">
+                  <p className="text-gray-200 text-sm mb-2">Diagnóstico</p>
+
+                  <div className="text-xs text-gray-300 space-y-1">
+                    <div><span className="text-gray-400">Tipo:</span> {debugInfo?.kind || streamKind}</div>
+                    <div><span className="text-gray-400">ID:</span> {id}</div>
+                    <div><span className="text-gray-400">Proxy:</span> {debugInfo?.proxyUrl || streamUrl}</div>
+                    <div><span className="text-gray-400">Original:</span> {debugInfo?.originalUrl || originalStreamUrl}</div>
+
+                    {debugInfo?.probe && (
+                      <>
+                        <div><span className="text-gray-400">Probe status:</span> {String(debugInfo.probe.status ?? '')}</div>
+                        <div><span className="text-gray-400">Probe content-type:</span> {debugInfo.probe.contentType || ''}</div>
+                        <div><span className="text-gray-400">Probe kind:</span> {debugInfo.probe.kind || ''}</div>
+                        {debugInfo.probe.errorMessage && (
+                          <div><span className="text-gray-400">Probe error:</span> {debugInfo.probe.errorMessage}</div>
+                        )}
+                        {debugInfo.probe.snippet && (
+                          <div className="mt-2">
+                            <div className="text-gray-400 mb-1">Primeiros bytes/texto:</div>
+                            <pre className="whitespace-pre-wrap break-words bg-black/40 p-2 rounded border border-dark-800 max-h-40 overflow-auto">{debugInfo.probe.snippet}</pre>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {debugInfo?.mediaError && (
+                      <>
+                        <div className="mt-2"><span className="text-gray-400">MediaError code:</span> {String(debugInfo.mediaError.code ?? '')}</div>
+                        <div><span className="text-gray-400">MediaError message:</span> {debugInfo.mediaError.message || ''}</div>
+                        <div><span className="text-gray-400">networkState:</span> {String(debugInfo.mediaError.networkState ?? '')}</div>
+                        <div><span className="text-gray-400">readyState:</span> {String(debugInfo.mediaError.readyState ?? '')}</div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="mt-3 text-xs text-gray-400">
+                    Dica: se o erro for código 4 e o canal toca no Smarters, geralmente é codec (HEVC/AC3) ou playlist bloqueada/fora do padrão.
+                  </div>
+                </div>
+              )}
+
               <button
                 onClick={() => navigate(-1)}
                 className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
