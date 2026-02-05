@@ -10,6 +10,7 @@ export default function Player() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [streamUrl, setStreamUrl] = useState(null);
+  const [streamKind, setStreamKind] = useState('auto');
 
   useEffect(() => {
     const loadStream = async () => {
@@ -51,6 +52,7 @@ export default function Player() {
         }
 
         const isHlsUrl = /\.m3u8(\?|$)/i.test(url) || /\.m3u(\?|$)/i.test(url);
+        const isTsUrl = /\.ts(\?|$)/i.test(url);
 
         // Usar proxy para fazer streaming (proxy segue redirects e adiciona CORS)
         // Para HLS, usar /hls para reescrever playlist e proxiar segmentos/keys.
@@ -62,9 +64,11 @@ export default function Player() {
           originalUrl: url,
           proxyUrl: proxyStreamUrl,
           isHlsUrl,
+          isTsUrl,
         });
         
         setStreamUrl(proxyStreamUrl);
+        setStreamKind(isHlsUrl ? 'hls' : (isTsUrl ? 'ts' : 'direct'));
         setLoading(false);
       } catch (err) {
         logger.error('player.load_stream_failed', { type, id }, err);
@@ -84,7 +88,8 @@ export default function Player() {
 
     logger.debug('player.stream.load', { streamUrl });
 
-    const isHlsStream = streamUrl.includes('/hls?') || /\.m3u8(\?|$)/i.test(streamUrl) || /\.m3u(\?|$)/i.test(streamUrl);
+    const isHlsStream = streamUrl.includes('/hls?') || streamKind === 'hls' || /\.m3u8(\?|$)/i.test(streamUrl) || /\.m3u(\?|$)/i.test(streamUrl);
+    const isTsStream = streamKind === 'ts' || /\.ts(\?|$)/i.test(streamUrl);
 
     // Limpar src anterior
     video.pause();
@@ -95,6 +100,7 @@ export default function Player() {
     video.crossOrigin = 'anonymous';
 
     let hls;
+    let mpegtsPlayer;
     let cancelled = false;
     if (isHlsStream) {
       // Safari (e alguns ambientes) suportam HLS nativo
@@ -141,7 +147,59 @@ export default function Player() {
         })();
       }
     } else {
-      video.src = streamUrl;
+      if (isTsStream) {
+        // MPEG-TS via MSE transmux (common for live IPTV)
+        (async () => {
+          try {
+            const mod = await import('mpegts.js');
+            const mpegts = mod?.default || mod;
+            if (cancelled) return;
+
+            if (!mpegts?.isSupported?.()) {
+              setError('Seu navegador não suporta MPEG-TS');
+              setLoading(false);
+              return;
+            }
+
+            mpegtsPlayer = mpegts.createPlayer(
+              {
+                type: 'mse',
+                isLive: true,
+                url: streamUrl,
+              },
+              {
+                enableWorker: true,
+                lazyLoad: false,
+                liveBufferLatencyChasing: true,
+              }
+            );
+
+            mpegtsPlayer.attachMediaElement(video);
+            mpegtsPlayer.load();
+
+            try {
+              await video.play();
+            } catch {
+              // Autoplay might be blocked; user can press play.
+            }
+
+            // Log player errors for diagnosis
+            try {
+              mpegtsPlayer.on(mpegts.Events.ERROR, (errType, errDetail, errInfo) => {
+                logger.error('player.mpegts.error', { errType, errDetail, errInfo });
+              });
+            } catch {
+              // ignore
+            }
+          } catch (err) {
+            logger.error('player.mpegts.import_failed', { streamUrl }, err);
+            setError('Falha ao inicializar player MPEG-TS');
+            setLoading(false);
+          }
+        })();
+      } else {
+        video.src = streamUrl;
+      }
     }
     
     video.addEventListener('play', () => {
@@ -180,8 +238,15 @@ export default function Player() {
           // ignore
         }
       }
+      if (mpegtsPlayer) {
+        try {
+          mpegtsPlayer.destroy();
+        } catch {
+          // ignore
+        }
+      }
     };
-  }, [streamUrl]);
+  }, [streamUrl, streamKind]);
 
   return (
     <div className="h-screen bg-black flex items-center justify-center relative">

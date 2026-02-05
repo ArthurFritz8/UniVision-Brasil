@@ -322,20 +322,24 @@ export const channelsAPI = {
         });
         
         const credentials = getIptvCredentials();
-        let baseUrl = credentials?.apiUrl || 'http://localhost:8000';
+        const baseUrl = normalizeBaseUrl(credentials?.apiUrl) || 'http://localhost:8000';
         
-        // Remover /player_api.php se existir na URL base
-        baseUrl = baseUrl.replace('/player_api.php', '').replace(/\/$/, '');
-        
-        const channels = streams.map(stream => ({
+        const channels = streams.map(stream => {
+          // Muitos provedores retornam live como .ts (MPEG-TS). Outros retornam .m3u8.
+          // Não forçar .m3u8 aqui — use o que o painel indicar quando possível.
+          const ext = String(stream?.container_extension || 'm3u8').replace(/^\./, '');
+          const fallbackUrl = `${baseUrl}/live/${credentials?.username}/${credentials?.password}/${stream.stream_id}.${ext}`;
+
+          return {
           _id: stream.stream_id || stream.id,
           title: stream.name,
           number: stream.num,
           logo: proxyImageUrl(stream.stream_icon),
-          streamUrl: stream.stream_url || `${baseUrl}/live/${credentials?.username}/${credentials?.password}/${stream.stream_id}.m3u8`,
+          streamUrl: stream.stream_url || fallbackUrl,
           category: stream.category_name,
           isLive: true,
-        }));
+          };
+        });
         return { channels, total, page: 1, limit: params?.limit ? Number(params.limit) : 20 };
       });
     },
@@ -357,12 +361,10 @@ export const channelsAPI = {
         : res;
       
       const credentials = getIptvCredentials();
-      let baseUrl = credentials?.apiUrl || 'http://localhost:8000';
-      
-      // Remover /player_api.php se existir na URL base
-      baseUrl = baseUrl.replace('/player_api.php', '').replace(/\/$/, '');
-      
-      const streamUrl = info.stream_url || `${baseUrl}/live/${credentials?.username}/${credentials?.password}/${id}.m3u8`;
+      const baseUrl = normalizeBaseUrl(credentials?.apiUrl) || 'http://localhost:8000';
+
+      const ext = String(info?.container_extension || 'm3u8').replace(/^\./, '');
+      const streamUrl = info.stream_url || `${baseUrl}/live/${credentials?.username}/${credentials?.password}/${id}.${ext}`;
       
       return { 
         channel: {
@@ -386,12 +388,20 @@ export const channelsAPI = {
       }
       
       const streams = Array.isArray(res) ? res.slice(0, 10) : (Array.isArray(res.data) ? res.data.slice(0, 10) : []);
-      const channels = streams.map(stream => ({
-        _id: stream.stream_id || stream.id,
-        title: stream.name,
-        logo: proxyImageUrl(stream.stream_icon),
-        streamUrl: stream.stream_url,
-      }));
+
+      const credentials = getIptvCredentials();
+      const baseUrl = normalizeBaseUrl(credentials?.apiUrl) || 'http://localhost:8000';
+
+      const channels = streams.map(stream => {
+        const ext = String(stream?.container_extension || 'm3u8').replace(/^\./, '');
+        const fallbackUrl = `${baseUrl}/live/${credentials?.username}/${credentials?.password}/${stream.stream_id}.${ext}`;
+        return {
+          _id: stream.stream_id || stream.id,
+          title: stream.name,
+          logo: proxyImageUrl(stream.stream_icon),
+          streamUrl: stream.stream_url || fallbackUrl,
+        };
+      });
       return { channels };
     }),
     { channels: mockChannels.slice(0, 6) }
