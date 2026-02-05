@@ -4,6 +4,90 @@ import { X } from 'lucide-react';
 import { channelsAPI, contentAPI, IPTV_PROXY_BASE_URL } from '../services/api';
 import { logger } from '@/utils/logger';
 
+const mediaErrorMessage = (video) => {
+  const code = video?.error?.code;
+  switch (code) {
+    case 1:
+      return 'Reprodução abortada';
+    case 2:
+      return 'Erro de rede ao carregar o stream';
+    case 3:
+      return 'Erro ao decodificar (codec/stream incompatível)';
+    case 4:
+      return 'Formato de mídia não suportado pelo navegador';
+    default:
+      return 'Erro ao reproduzir';
+  }
+};
+
+const detectKindFromBytes = (bytes, contentType) => {
+  const ct = String(contentType || '').toLowerCase();
+  if (ct.includes('mpegurl') || ct.includes('application/vnd.apple.mpegurl') || ct.includes('application/x-mpegurl')) {
+    return 'hls';
+  }
+  if (ct.includes('mp2t') || ct.includes('mpegts') || ct.includes('video/mp2t')) {
+    return 'ts';
+  }
+
+  if (!bytes || bytes.length < 16) return 'unknown';
+
+  // HLS playlists are plain text and begin with #EXTM3U
+  try {
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    const trimmed = text.replace(/^\uFEFF/, '').trimStart();
+    if (trimmed.startsWith('#EXTM3U')) return 'hls';
+  } catch {
+    // ignore
+  }
+
+  // MPEG-TS has sync byte 0x47 at 188-byte intervals
+  // We check first byte and a couple of likely packet boundaries.
+  const isSync = (idx) => idx < bytes.length && bytes[idx] === 0x47;
+  if (isSync(0) && (isSync(188) || isSync(376) || isSync(564))) return 'ts';
+
+  return 'unknown';
+};
+
+const probeStreamKindViaProxy = async ({ originalUrl, timeoutMs = 3500 }) => {
+  // Fetch a small chunk via /stream (no CORS issues) and inspect headers/body.
+  const probeUrl = `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(originalUrl)}`;
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(probeUrl, {
+      method: 'GET',
+      signal: controller.signal,
+      // Avoid reusing cached errors for probes
+      cache: 'no-store',
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+
+    // Some servers respond with playlists but without body streaming support.
+    if (!res.body) {
+      return detectKindFromBytes(null, contentType);
+    }
+
+    const reader = res.body.getReader();
+    const { value } = await reader.read();
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+
+    const bytes = value ? new Uint8Array(value) : null;
+    return detectKindFromBytes(bytes, contentType);
+  } catch (err) {
+    logger.warn('player.stream.probe_failed', { message: err?.message });
+    return 'unknown';
+  } finally {
+    clearTimeout(t);
+  }
+};
+
 export default function Player() {
   const { type, id } = useParams();
   const navigate = useNavigate();
@@ -54,21 +138,33 @@ export default function Player() {
         const isHlsUrl = /\.m3u8(\?|$)/i.test(url) || /\.m3u(\?|$)/i.test(url);
         const isTsUrl = /\.ts(\?|$)/i.test(url);
 
+        let kind = isHlsUrl ? 'hls' : (isTsUrl ? 'ts' : 'auto');
+
+        // Alguns provedores retornam HLS sem extensão (ex: .php, sem .m3u8).
+        // Para evitar usar o modo errado e disparar player.video.error, fazemos um probe rápido via proxy.
+        if (type === 'live' && kind === 'auto') {
+          const detected = await probeStreamKindViaProxy({ originalUrl: url });
+          if (detected === 'hls' || detected === 'ts') {
+            kind = detected;
+          }
+        }
+
         // Usar proxy para fazer streaming (proxy segue redirects e adiciona CORS)
         // Para HLS, usar /hls para reescrever playlist e proxiar segmentos/keys.
-        const proxyStreamUrl = isHlsUrl
+        const proxyStreamUrl = kind === 'hls'
           ? `${IPTV_PROXY_BASE_URL}/hls?url=${encodeURIComponent(url)}`
           : `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(url)}`;
 
         logger.debug('player.stream.proxy_url', {
           originalUrl: url,
           proxyUrl: proxyStreamUrl,
+          kind,
           isHlsUrl,
           isTsUrl,
         });
         
         setStreamUrl(proxyStreamUrl);
-        setStreamKind(isHlsUrl ? 'hls' : (isTsUrl ? 'ts' : 'direct'));
+        setStreamKind(kind === 'auto' ? 'direct' : kind);
         setLoading(false);
       } catch (err) {
         logger.error('player.load_stream_failed', { type, id }, err);
@@ -209,11 +305,15 @@ export default function Player() {
     
     const onError = (e) => {
       logger.error('player.video.error', {
+        streamKind,
+        streamUrl,
         code: video.error?.code,
         message: video.error?.message,
+        networkState: video.networkState,
+        readyState: video.readyState,
         error: e
       });
-      setError(`Erro ao carregar vídeo (Código: ${video.error?.code})`);
+      setError(`${mediaErrorMessage(video)} (Código: ${video.error?.code ?? 'n/a'})`);
       setLoading(false);
     };
 
