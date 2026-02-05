@@ -33,9 +33,9 @@ export default function MainLayout() {
 
     // Let initial UI paint first.
     if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-      window.requestIdleCallback(run, { timeout: 2000 });
+      window.requestIdleCallback(run, { timeout: 15000 });
     } else {
-      setTimeout(run, 800);
+      setTimeout(run, 8000);
     }
   }, [credentials?.apiUrl, credentials?.m3uUrl, credentials?.username, credentials?.password]);
 
