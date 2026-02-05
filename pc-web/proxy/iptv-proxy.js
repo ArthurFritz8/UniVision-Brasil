@@ -169,9 +169,14 @@ const isTimeoutError = (err) => {
 const CACHE_MAX_ENTRIES = Number(process.env.CACHE_MAX_ENTRIES || 60);
 const CACHE_MAX_BYTES = Number(process.env.CACHE_MAX_BYTES || 64 * 1024 * 1024); // 64MB
 const CACHE_MAX_ENTRY_BYTES = Number(process.env.CACHE_MAX_ENTRY_BYTES || 20 * 1024 * 1024); // 20MB per response
+// If upstream is slow/down, serve stale cached data for a while instead of failing hard.
+const CACHE_STALE_IF_ERROR_MS = Number(process.env.CACHE_STALE_IF_ERROR_MS || 12 * 60 * 60 * 1000); // 12h
 
 const cacheStore = new Map();
 let cacheBytes = 0;
+
+// Dedupe concurrent upstream calls for the same key (prevents thundering herd).
+const inflightByKey = new Map();
 
 const cacheDel = (key) => {
   const existing = cacheStore.get(key);
@@ -181,13 +186,29 @@ const cacheDel = (key) => {
   }
 };
 
-const cacheGet = (key) => {
+const cacheGetFresh = (key) => {
   const entry = cacheStore.get(key);
   if (!entry) return null;
   if (entry.expiresAt <= Date.now()) {
+    return null;
+  }
+  // Refresh LRU
+  cacheStore.delete(key);
+  cacheStore.set(key, entry);
+  return entry;
+};
+
+const cacheGetStale = (key) => {
+  const entry = cacheStore.get(key);
+  if (!entry) return null;
+
+  const now = Date.now();
+  const staleUntil = entry.staleUntil ?? entry.expiresAt;
+  if (staleUntil <= now) {
     cacheDel(key);
     return null;
   }
+
   // Refresh LRU
   cacheStore.delete(key);
   cacheStore.set(key, entry);
@@ -200,7 +221,9 @@ const cacheSet = (key, body, ttlMs) => {
     if (!size || size > CACHE_MAX_ENTRY_BYTES) return;
 
     cacheDel(key);
-    cacheStore.set(key, { body, expiresAt: Date.now() + ttlMs, size });
+    const expiresAt = Date.now() + ttlMs;
+    const staleUntil = expiresAt + CACHE_STALE_IF_ERROR_MS;
+    cacheStore.set(key, { body, expiresAt, staleUntil, size });
     cacheBytes += size;
 
     // Evict LRU
@@ -212,6 +235,22 @@ const cacheSet = (key, body, ttlMs) => {
   } catch {
     // ignore cache failures
   }
+};
+
+const withInflight = async (key, fn) => {
+  if (!key) return fn();
+  const existing = inflightByKey.get(key);
+  if (existing) return existing;
+
+  const p = Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      // Only delete if it's still the same promise.
+      if (inflightByKey.get(key) === p) inflightByKey.delete(key);
+    });
+
+  inflightByKey.set(key, p);
+  return p;
 };
 
 const getXtreamCacheKey = (targetUrl) => {
@@ -239,7 +278,8 @@ const getXtreamTtlMs = (targetUrl) => {
     if (action.includes('categories')) return 60 * 60 * 1000; // 1h
     if (action === 'get_series_info') return 10 * 60 * 1000;
     if (action.endsWith('_info')) return 10 * 60 * 1000;
-    if (action === 'get_live_streams' || action === 'get_vod_streams' || action === 'get_series') return 10 * 60 * 1000;
+    // These are heavy; cache longer for speed.
+    if (action === 'get_live_streams' || action === 'get_vod_streams' || action === 'get_series') return 30 * 60 * 1000; // 30m
     return 0;
   } catch {
     return 0;
@@ -611,7 +651,7 @@ const fetchXtreamJsonCached = async ({ targetUrl, requestId }) => {
   const ttlMs = cacheKey ? getXtreamTtlMs(targetUrl) : 0;
 
   if (cacheKey && ttlMs > 0) {
-    const hit = cacheGet(cacheKey);
+    const hit = cacheGetFresh(cacheKey);
     if (hit) {
       try {
         return { json: JSON.parse(hit.body), cache: 'HIT' };
@@ -621,28 +661,47 @@ const fetchXtreamJsonCached = async ({ targetUrl, requestId }) => {
     }
   }
 
-  const response = await upstream.get(targetUrl, {
-    headers: getHeaders(),
-    family: 4,
-    responseType: 'arraybuffer',
-  });
+  const doFetch = async () => {
+    const response = await upstream.get(targetUrl, {
+      headers: getHeaders(),
+      family: 4,
+      httpsAgent: getHttpsAgent(),
+      responseType: 'arraybuffer',
+      timeout: IPTV_TIMEOUT_MS,
+    });
 
-  if (response.status >= 400) {
-    const err = new Error(`Upstream HTTP ${response.status}`);
-    err.statusCode = response.status;
-    err.upstreamStatus = response.status;
-    err.requestId = requestId;
+    if (response.status >= 400) {
+      const err = new Error(`Upstream HTTP ${response.status}`);
+      err.statusCode = response.status;
+      err.upstreamStatus = response.status;
+      err.requestId = requestId;
+      throw err;
+    }
+
+    const text = Buffer.from(response.data).toString('utf8');
+    const json = JSON.parse(text);
+
+    if (cacheKey && ttlMs > 0) {
+      cacheSet(cacheKey, JSON.stringify(json), ttlMs);
+    }
+
+    return { json, cache: cacheKey && ttlMs > 0 ? 'MISS' : 'BYPASS' };
+  };
+
+  try {
+    return await withInflight(cacheKey, doFetch);
+  } catch (err) {
+    // Serve stale on network-ish errors (timeout, DNS, TLS) if available.
+    const stale = cacheKey ? cacheGetStale(cacheKey) : null;
+    if (stale && isUpstreamNetworkError(err)) {
+      try {
+        return { json: JSON.parse(stale.body), cache: 'STALE' };
+      } catch {
+        // ignore
+      }
+    }
     throw err;
   }
-
-  const text = Buffer.from(response.data).toString('utf8');
-  const json = JSON.parse(text);
-
-  if (cacheKey && ttlMs > 0) {
-    cacheSet(cacheKey, JSON.stringify(json), ttlMs);
-  }
-
-  return { json, cache: cacheKey && ttlMs > 0 ? 'MISS' : 'BYPASS' };
 };
 
 // Returns only seasons + info (no big episodes payload)
@@ -933,7 +992,7 @@ app.get('/iptv', async (req, res) => {
     const ttlMs = cacheKey ? getXtreamTtlMs(targetUrl) : 0;
 
     if (cacheKey && ttlMs > 0) {
-      const hit = cacheGet(cacheKey);
+      const hit = cacheGetFresh(cacheKey);
       if (hit) {
         res.status(200);
         res.set('Content-Type', 'application/json; charset=utf-8');
@@ -942,6 +1001,8 @@ app.get('/iptv', async (req, res) => {
         return res.send(hit.body);
       }
     }
+
+    const staleEntry = cacheKey ? cacheGetStale(cacheKey) : null;
 
     const buildCandidateUrls = (rawUrl) => {
       try {
@@ -977,45 +1038,74 @@ app.get('/iptv', async (req, res) => {
         timeout: IPTV_TIMEOUT_MS,
       });
 
-    const candidates = buildCandidateUrls(targetUrl);
-    let response = null;
-    let lastError = null;
+    const doFetch = async () => {
+      const candidates = buildCandidateUrls(targetUrl);
+      let response = null;
+      let lastError = null;
 
-    for (let i = 0; i < candidates.length; i++) {
-      const candidateUrl = candidates[i];
-      try {
-        if (i > 0) {
-          log('warn', 'iptv.retry_candidate', {
-            requestId: req.id,
-            from: targetUrl,
-            to: candidateUrl,
-          });
+      for (let i = 0; i < candidates.length; i++) {
+        const candidateUrl = candidates[i];
+        try {
+          if (i > 0) {
+            log('warn', 'iptv.retry_candidate', {
+              requestId: req.id,
+              from: targetUrl,
+              to: candidateUrl,
+            });
+          }
+
+          const r = await fetchOnce(candidateUrl);
+          response = r;
+
+          if (r.status < 400) break;
+
+          // If upstream is refusing or gatewaying (common on http), try next candidate.
+          const retryableStatus = r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
+          if (!retryableStatus || i === candidates.length - 1) break;
+        } catch (err) {
+          lastError = err;
+          const networkish = isUpstreamNetworkError(err);
+          // If we already waited a full timeout, don't try another protocol (reduces long hangs).
+          if (isTimeoutError(err) || !networkish || i === candidates.length - 1) throw err;
         }
-
-        const r = await fetchOnce(candidateUrl);
-        response = r;
-
-        if (r.status < 400) break;
-
-        // If upstream is refusing or gatewaying (common on http), try next candidate.
-        const retryableStatus = r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
-        if (!retryableStatus || i === candidates.length - 1) break;
-      } catch (err) {
-        lastError = err;
-        const networkish = isUpstreamNetworkError(err);
-        // If we already waited a full timeout, don't try another protocol (reduces long hangs).
-        if (isTimeoutError(err) || !networkish || i === candidates.length - 1) throw err;
       }
-    }
 
-    if (!response) {
-      throw lastError || new Error('No upstream response');
+      if (!response) {
+        throw lastError || new Error('No upstream response');
+      }
+      return response;
+    };
+
+    let response;
+    try {
+      response = await withInflight(cacheKey, doFetch);
+    } catch (err) {
+      // Serve stale cache on network-ish errors.
+      if (staleEntry && isUpstreamNetworkError(err)) {
+        res.status(200);
+        res.set('Content-Type', 'application/json; charset=utf-8');
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('x-cache', 'STALE');
+        return res.send(staleEntry.body);
+      }
+      throw err;
     }
 
     log('debug', 'iptv.upstream_status', { requestId: req.id, status: response.status });
     
     if (response.status >= 400) {
       log('warn', 'iptv.upstream_http_error', { requestId: req.id, status: response.status, statusText: response.statusText, targetUrl });
+
+      // If upstream is failing and we have stale cache, prefer returning stale over an empty UI.
+      const isRetryableHttp = response.status >= 500 || response.status === 502 || response.status === 503 || response.status === 504;
+      if (staleEntry && isRetryableHttp) {
+        res.status(200);
+        res.set('Content-Type', 'application/json; charset=utf-8');
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('x-cache', 'STALE');
+        return res.send(staleEntry.body);
+      }
+
       return res.status(response.status).json({ 
         error: `API Error: ${response.status}`,
         details: response.data,
