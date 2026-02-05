@@ -7,8 +7,11 @@ import compression from 'compression';
 import https from 'https';
 import http from 'http';
 import { randomUUID } from 'crypto';
-import { parser } from 'stream-json';
-import { streamArray } from 'stream-json/streamers/StreamArray.js';
+import streamJsonPkg from 'stream-json';
+import streamArrayPkg from 'stream-json/streamers/StreamArray.js';
+
+const { parser } = streamJsonPkg;
+const { streamArray } = streamArrayPkg;
 
 // Configura DNS para usar servidores públicos do Google
 dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
