@@ -489,22 +489,21 @@ app.get('/hls', async (req, res) => {
     const buildCandidateUrls = (rawUrl) => {
       try {
         const u = new URL(String(rawUrl));
-        const urls = [];
 
-        // Prefer HTTPS first (many providers redirect to HTTPS).
+        // Try the provided URL first. Many IPTV providers are http-only;
+        // preferring https can cause long timeouts and never fall back.
+        const urls = [u.toString()];
+
         if (u.protocol === 'http:') {
           const httpsUrl = new URL(u.toString());
           httpsUrl.protocol = 'https:';
           urls.push(httpsUrl.toString());
-          urls.push(u.toString());
         } else if (u.protocol === 'https:') {
-          urls.push(u.toString());
           const httpUrl = new URL(u.toString());
           httpUrl.protocol = 'http:';
           urls.push(httpUrl.toString());
-        } else {
-          urls.push(u.toString());
         }
+
         return urls;
       } catch {
         return [String(rawUrl)];
@@ -538,7 +537,7 @@ app.get('/hls', async (req, res) => {
 
         if (r.status < 400) break;
 
-        const retryableStatus = r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
+        const retryableStatus = r.status === 500 || r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
         if (!retryableStatus || i === candidates.length - 1) break;
       } catch (err) {
         lastError = err;
@@ -936,7 +935,7 @@ app.get('/stream', async (req, res) => {
 
         if (r.status < 400) break;
 
-        const retryableStatus = r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
+        const retryableStatus = r.status === 500 || r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
         if (!retryableStatus || i === candidates.length - 1) break;
 
         // Discard upstream body before retrying
@@ -1119,7 +1118,7 @@ app.get('/iptv', async (req, res) => {
           if (r.status < 400) break;
 
           // If upstream is refusing or gatewaying (common on http), try next candidate.
-          const retryableStatus = r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
+          const retryableStatus = r.status === 500 || r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
           if (!retryableStatus || i === candidates.length - 1) break;
         } catch (err) {
           lastError = err;
