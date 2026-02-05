@@ -6,6 +6,7 @@ import useAppStore from '@store/appStore';
 import useIptvStore from '@store/iptvStore';
 import { warmupAll } from '@services/warmup';
 import { logger } from '@/utils/logger';
+import ContentRefreshOverlay from '@/components/ContentRefreshOverlay';
 
 export default function MainLayout() {
   const { sidebarCollapsed, theme } = useAppStore();
@@ -50,6 +51,7 @@ export default function MainLayout() {
 
   return (
     <div className={`min-h-screen ${theme === 'dark' ? 'bg-dark-950 text-white' : 'bg-white text-black'} flex flex-col transition-colors duration-300`}>
+      <ContentRefreshOverlay />
       <Navbar />
       
       <div className="flex flex-1 overflow-hidden">

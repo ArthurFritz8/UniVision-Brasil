@@ -100,19 +100,29 @@ const useAuthStore = create(
       loadUser: async () => {
         try {
           set({ isLoading: true });
-          const storedUser = localStorage.getItem('user');
           const token = localStorage.getItem('token');
           
-          if (storedUser && token) {
-            set({
-              user: JSON.parse(storedUser),
-              token: token,
-              isAuthenticated: true,
-              isLoading: false,
-            });
-          } else {
+          if (!token) {
             set({ isAuthenticated: false, isLoading: false });
+            return;
           }
+
+          // Validate session and load the authoritative user object
+          const me = await authAPI.getMe();
+          const user = me?.user || me?.data?.user;
+          if (!user) {
+            set({ isAuthenticated: false, isLoading: false });
+            return;
+          }
+
+          set({
+            user,
+            token,
+            isAuthenticated: true,
+            isLoading: false,
+          });
+
+          localStorage.setItem('user', JSON.stringify(user));
         } catch (error) {
           set({
             user: null,

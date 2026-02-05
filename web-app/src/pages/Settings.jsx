@@ -3,15 +3,27 @@ import { useState } from 'react';
 import useAppStore from '@store/appStore';
 import useIptvStore from '@store/iptvStore';
 import toast from 'react-hot-toast';
-import { IPTV_PROXY_BASE_URL } from '@services/api';
+import { IPTV_PROXY_BASE_URL, categoriesAPI, resetSearchCaches } from '@services/api';
 import { logger } from '@/utils/logger';
 
 export default function Settings() {
-  const { theme, toggleTheme, playerSettings, setPlayerSettings } = useAppStore();
+  const {
+    theme,
+    toggleTheme,
+    playerSettings,
+    setPlayerSettings,
+    clearCategoriesCache,
+    bumpContentRefresh,
+    startContentRefresh,
+    setContentRefreshStage,
+    finishContentRefresh,
+    updateCategoriesCache,
+  } = useAppStore();
   const { credentials, setCredentials, clearCredentials } = useIptvStore();
   const [formData, setFormData] = useState(credentials);
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const handleSaveCredentials = () => {
     setCredentials(formData);
@@ -85,6 +97,42 @@ export default function Settings() {
     setFormData({ username: '', password: '', apiUrl: '', m3uUrl: '' });
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+  };
+
+  const handleRefreshContent = async () => {
+    if (refreshing) return;
+
+    setRefreshing(true);
+    startContentRefresh('Atualizando conteúdo: TV ao Vivo, Filmes e Séries. Aguarde…');
+
+    try {
+      // Reset client caches and force pages to refetch
+      resetSearchCaches?.();
+      clearCategoriesCache?.();
+
+      setContentRefreshStage?.('live', 'Atualizando TV ao Vivo…');
+      const live = await categoriesAPI.getAll({ type: 'live' });
+      updateCategoriesCache?.('live', live?.categories || []);
+
+      setContentRefreshStage?.('vod', 'Atualizando Filmes…');
+      const vod = await categoriesAPI.getAll({ type: 'vod' });
+      updateCategoriesCache?.('vod', vod?.categories || []);
+
+      setContentRefreshStage?.('series', 'Atualizando Séries…');
+      const series = await categoriesAPI.getAll({ type: 'series' });
+      updateCategoriesCache?.('series', series?.categories || []);
+
+      // Now force pages to clear their local refs and reload with fresh data.
+      bumpContentRefresh?.();
+
+      toast.success('Conteúdo atualizado!');
+    } catch (error) {
+      logger.error('pages.settings.refresh_content_failed', undefined, error);
+      toast.error('Falha ao atualizar conteúdo');
+    } finally {
+      finishContentRefresh?.();
+      setRefreshing(false);
+    }
   };
 
   const handleInputChange = (field, value) => {
@@ -222,6 +270,33 @@ export default function Settings() {
                 </label>
               </div>
 
+            </div>
+          </section>
+
+          {/* Conteúdo */}
+          <section className={`rounded-2xl p-8 border-2 ${cardClass}`}>
+            <div className="flex items-center gap-4 mb-6">
+              <div className={`p-3 rounded-lg ${theme === 'dark' ? 'bg-primary-600/20' : 'bg-primary-100'}`}>
+                <span className="text-3xl">🔄</span>
+              </div>
+              <div>
+                <h2 className={`text-2xl font-bold ${textClass}`}>Conteúdo</h2>
+                <p className={`text-sm ${mutedClass}`}>Recarregar categorias e listas</p>
+              </div>
+            </div>
+
+            <div className={`p-6 rounded-xl ${theme === 'dark' ? 'bg-dark-950/50' : 'bg-gray-50'}`}>
+              <p className={`${mutedClass} text-sm mb-4`}>
+                Use este botão quando houver novos canais/filmes/séries. Ele limpa caches e força o app a buscar novamente.
+              </p>
+
+              <button
+                onClick={handleRefreshContent}
+                disabled={refreshing}
+                className="btn-primary px-8 py-3 text-base font-semibold hover:scale-105 transition-transform disabled:opacity-60"
+              >
+                {refreshing ? 'Atualizando...' : 'Atualizar conteúdo completo'}
+              </button>
             </div>
           </section>
 

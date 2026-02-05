@@ -16,7 +16,13 @@ export default function Movies() {
   const moviesCacheRef = useRef(new Map());
   
   const selectedCategory = searchParams.get('category');
-  const { setActiveCategory, categoriesCache, updateCategoriesCache } = useAppStore();
+  const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
+
+  useEffect(() => {
+    moviesCacheRef.current.clear();
+    setMovies([]);
+    setLoading(true);
+  }, [contentRefreshNonce]);
 
   const pickDefaultCategory = (cats) => {
     const list = Array.isArray(cats) ? cats : [];
@@ -69,8 +75,7 @@ export default function Movies() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [contentRefreshNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,7 +118,7 @@ export default function Movies() {
     return () => {
       cancelled = true;
     };
-  }, [selectedCategory]);
+  }, [selectedCategory, contentRefreshNonce]);
 
   const handleCategoryChange = (categoryId) => {
     if (categoryId) {

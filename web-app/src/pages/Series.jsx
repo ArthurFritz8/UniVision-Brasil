@@ -16,7 +16,13 @@ export default function Series() {
   const seriesCacheRef = useRef(new Map());
   
   const selectedCategory = searchParams.get('category');
-  const { setActiveCategory, categoriesCache, updateCategoriesCache } = useAppStore();
+  const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
+
+  useEffect(() => {
+    seriesCacheRef.current.clear();
+    setSeries([]);
+    setLoading(true);
+  }, [contentRefreshNonce]);
 
   const pickDefaultCategory = (cats) => {
     const list = Array.isArray(cats) ? cats : [];
@@ -67,8 +73,7 @@ export default function Series() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [contentRefreshNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,7 +116,7 @@ export default function Series() {
     return () => {
       cancelled = true;
     };
-  }, [selectedCategory]);
+  }, [selectedCategory, contentRefreshNonce]);
 
   const handleCategoryChange = (categoryId) => {
     if (categoryId) {

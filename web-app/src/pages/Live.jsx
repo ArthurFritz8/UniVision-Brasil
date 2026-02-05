@@ -16,7 +16,14 @@ export default function Live() {
   const channelsCacheRef = useRef(new Map());
   
   const selectedCategory = searchParams.get('category');
-  const { setActiveCategory, categoriesCache, updateCategoriesCache } = useAppStore();
+  const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
+
+  useEffect(() => {
+    // Clear page-level cache so next loads pull fresh data
+    channelsCacheRef.current.clear();
+    setChannels([]);
+    setLoading(true);
+  }, [contentRefreshNonce]);
 
   const pickDefaultCategory = (cats) => {
     const list = Array.isArray(cats) ? cats : [];
@@ -67,8 +74,7 @@ export default function Live() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [contentRefreshNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,7 +116,7 @@ export default function Live() {
     return () => {
       cancelled = true;
     };
-  }, [selectedCategory]);
+  }, [selectedCategory, contentRefreshNonce]);
 
   const handleCategoryChange = (categoryId) => {
     if (categoryId) {

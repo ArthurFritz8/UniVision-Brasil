@@ -1,13 +1,26 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, User, LogOut, Menu } from 'lucide-react';
+import { Search, User, LogOut, Menu, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import useAuthStore from '@store/authStore';
 import useAppStore from '@store/appStore';
+import { categoriesAPI, resetSearchCaches } from '@services/api';
+import toast from 'react-hot-toast';
+import { logger } from '@/utils/logger';
 
 export default function Navbar() {
   const navigate = useNavigate();
   const { isAuthenticated, user, logout } = useAuthStore();
-  const { toggleSidebar, theme } = useAppStore();
+  const {
+    toggleSidebar,
+    theme,
+    contentRefresh,
+    clearCategoriesCache,
+    bumpContentRefresh,
+    startContentRefresh,
+    setContentRefreshStage,
+    finishContentRefresh,
+    updateCategoriesCache,
+  } = useAppStore();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -22,6 +35,37 @@ export default function Navbar() {
   const handleLogout = async () => {
     await logout();
     navigate('/login');
+  };
+
+  const handleRefreshContent = async () => {
+    if (contentRefresh?.isRefreshing) return;
+
+    startContentRefresh?.('Atualizando conteúdo: TV ao Vivo, Filmes e Séries. Aguarde…');
+
+    try {
+      resetSearchCaches?.();
+      clearCategoriesCache?.();
+
+      setContentRefreshStage?.('live', 'Atualizando TV ao Vivo…');
+      const live = await categoriesAPI.getAll({ type: 'live' });
+      updateCategoriesCache?.('live', live?.categories || []);
+
+      setContentRefreshStage?.('vod', 'Atualizando Filmes…');
+      const vod = await categoriesAPI.getAll({ type: 'vod' });
+      updateCategoriesCache?.('vod', vod?.categories || []);
+
+      setContentRefreshStage?.('series', 'Atualizando Séries…');
+      const series = await categoriesAPI.getAll({ type: 'series' });
+      updateCategoriesCache?.('series', series?.categories || []);
+
+      bumpContentRefresh?.();
+      toast.success('Conteúdo atualizado!');
+    } catch (error) {
+      logger.error('navbar.refresh_content_failed', undefined, error);
+      toast.error('Falha ao atualizar conteúdo');
+    } finally {
+      finishContentRefresh?.();
+    }
   };
 
   return (
@@ -61,7 +105,17 @@ export default function Navbar() {
           {/* Right: User */}
           <div className="flex items-center gap-4">
             {isAuthenticated ? (
-              <div className="relative">
+              <>
+                <button
+                  onClick={handleRefreshContent}
+                  disabled={Boolean(contentRefresh?.isRefreshing)}
+                  title="Atualizar conteúdo completo"
+                  className={`p-2 rounded-lg transition-colors disabled:opacity-60 ${theme === 'dark' ? 'hover:bg-dark-800' : 'hover:bg-gray-200'}`}
+                >
+                  <RefreshCw size={20} className={contentRefresh?.isRefreshing ? 'animate-spin' : ''} />
+                </button>
+
+                <div className="relative">
                 <button
                   onClick={() => setShowUserMenu(!showUserMenu)}
                   className="flex items-center gap-2 p-2 hover:bg-dark-800 rounded-lg transition-colors"
@@ -99,7 +153,8 @@ export default function Navbar() {
                     </div>
                   </>
                 )}
-              </div>
+                </div>
+              </>
             ) : (
               <Link
                 to="/login"

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { logger } from '@/utils/logger';
+import { localAuth } from './localAuth';
 import { 
   mockChannels, 
   mockMovies, 
@@ -259,31 +260,88 @@ api.interceptors.response.use(
 
 export default api;
 
-// Auth endpoints com fallback mock
+const makeClientError = (message, status = 400) => {
+  const err = new Error(String(message || 'Erro'));
+  err.response = { status, data: { message: String(message || 'Erro') } };
+  return err;
+};
+
+// Auth endpoints
+// This repo often runs without a backend API. In that case, we use a local (per-device) auth database.
+// If a backend is later added, set `VITE_TRY_BACKEND=true` to prefer server auth in dev.
 export const authAPI = {
-  register: (data) => fetchWithMock(
-    () => api.post('/auth/register', data).then(res => {
-      // Se for bem-sucedido, salvar o usuário com os dados corretos
-      const userData = res.data?.user || { name: data.name, email: data.email };
-      return { success: true, message: 'Cadastro realizado', user: userData, token: res.data?.token || 'mock-token-' + Date.now() };
-    }).catch(error => {
-      // Em caso de erro, criar usuário localmente
-      return { success: true, message: 'Cadastro realizado', user: { name: data.name, email: data.email, _id: Date.now() }, token: 'mock-token-' + Date.now() };
-    }),
-    { success: true, message: 'Cadastro realizado', user: { name: mockUser.name, email: mockUser.email }, token: 'mock-token-' + Date.now() }
-  ),
-  login: (data) => fetchWithMock(
-    () => api.post('/auth/login', data),
-    { success: true, token: 'mock-token-' + Date.now(), user: mockUser }
-  ),
-  logout: () => api.post('/auth/logout'),
-  getMe: () => fetchWithMock(
-    () => api.get('/auth/me'),
-    { user: mockUser }
-  ),
-  updateProfile: (data) => api.put('/auth/profile', data),
-  changePassword: (data) => api.put('/auth/change-password', data),
-  refreshToken: (refreshToken) => api.post('/auth/refresh', { refreshToken }),
+  register: async (data) => {
+    try {
+      if (shouldTryBackend()) return await api.post('/auth/register', data);
+    } catch (err) {
+      logger.debug('auth.register.backend_failed', { message: err?.message });
+    }
+
+    try {
+      const res = await localAuth.register(data || {});
+      return { ...res, message: 'Cadastro realizado' };
+    } catch (err) {
+      throw makeClientError(err?.message || 'Erro ao cadastrar', 400);
+    }
+  },
+
+  login: async (data) => {
+    try {
+      if (shouldTryBackend()) return await api.post('/auth/login', data);
+    } catch (err) {
+      logger.debug('auth.login.backend_failed', { message: err?.message });
+    }
+
+    try {
+      const res = await localAuth.login(data || {});
+      return { ...res, message: 'Login realizado' };
+    } catch (err) {
+      throw makeClientError(err?.message || 'Erro ao fazer login', 401);
+    }
+  },
+
+  logout: async () => {
+    try {
+      if (shouldTryBackend()) {
+        try {
+          await api.post('/auth/logout');
+        } catch {
+          // ignore
+        }
+      }
+    } finally {
+      await localAuth.logout();
+    }
+    return { success: true };
+  },
+
+  getMe: async () => {
+    try {
+      if (shouldTryBackend()) return await api.get('/auth/me');
+    } catch (err) {
+      logger.debug('auth.getMe.backend_failed', { message: err?.message });
+    }
+
+    try {
+      return await localAuth.getMe();
+    } catch (err) {
+      throw makeClientError(err?.message || 'Sessão inválida', 401);
+    }
+  },
+
+  updateProfile: async (data) => {
+    try {
+      if (shouldTryBackend()) return await api.put('/auth/profile', data);
+    } catch (err) {
+      logger.debug('auth.updateProfile.backend_failed', { message: err?.message });
+    }
+
+    try {
+      return await localAuth.updateProfile(data || {});
+    } catch (err) {
+      throw makeClientError(err?.message || 'Erro ao atualizar perfil', 400);
+    }
+  },
 };
 
 // Channels endpoints com fallback mock
@@ -1058,6 +1116,18 @@ export const epgAPI = {
 export const streamAPI = {
   getUrl: (type, id) => api.get(`/stream/${type}/${id}`),
   validate: (data) => api.post('/stream/validate', data),
+};
+
+export const resetSearchCaches = () => {
+  // Reset search index and cached results so next search rebuilds fresh data.
+  searchIndexState = {
+    key: '',
+    builtAt: 0,
+    movies: [],
+    series: [],
+    building: null,
+  };
+  searchResultsCache.clear();
 };
 
 // Users endpoints (Admin only)

@@ -35,6 +35,49 @@ const useAppStore = create(
           lastUpdate: Date.now(),
         }
       })),
+
+      clearCategoriesCache: () => set(() => ({
+        categoriesCache: {
+          live: null,
+          vod: null,
+          series: null,
+          lastUpdate: null,
+        },
+      })),
+
+      // Content refresh (forces pages to refetch and clear local refs)
+      contentRefreshNonce: 0,
+      bumpContentRefresh: () => set((state) => ({
+        contentRefreshNonce: Number(state.contentRefreshNonce || 0) + 1,
+      })),
+
+      contentRefresh: {
+        isRefreshing: false,
+        stage: '',
+        message: '',
+      },
+      startContentRefresh: (message) => set(() => ({
+        contentRefresh: {
+          isRefreshing: true,
+          stage: 'init',
+          message: String(message || 'Atualizando conteúdo...'),
+        }
+      })),
+      setContentRefreshStage: (stage, message) => set((state) => ({
+        contentRefresh: {
+          ...state.contentRefresh,
+          isRefreshing: true,
+          stage: String(stage || ''),
+          message: String(message || state.contentRefresh?.message || ''),
+        }
+      })),
+      finishContentRefresh: () => set((state) => ({
+        contentRefresh: {
+          ...state.contentRefresh,
+          isRefreshing: false,
+          stage: 'done',
+        }
+      })),
       
       // Player settings
       playerSettings: {

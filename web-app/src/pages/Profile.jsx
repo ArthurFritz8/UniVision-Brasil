@@ -41,12 +41,7 @@ export default function Profile() {
 
     try {
       setIsSaving(true);
-      
-      // Atualizar no localStorage imediatamente (já que não temos backend real)
-      const updatedUser = { ...user, name: formData.name, email: formData.email };
-      localStorage.setItem('user', JSON.stringify(updatedUser));
-      
-      // Atualizar no store
+
       await updateProfile(formData);
       
       toast.success('Perfil atualizado com sucesso!');
