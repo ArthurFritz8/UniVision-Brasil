@@ -3,9 +3,41 @@ import { useEffect } from 'react';
 import Navbar from '@components/Navbar';
 import Sidebar from '@components/Sidebar';
 import useAppStore from '@store/appStore';
+import useIptvStore from '@store/iptvStore';
+import { warmupIptvCaches } from '@services/warmup';
+import { logger } from '@/utils/logger';
 
 export default function MainLayout() {
   const { sidebarCollapsed, theme } = useAppStore();
+  const credentials = useIptvStore((s) => s.credentials);
+
+  useEffect(() => {
+    const hasCreds = Boolean(
+      credentials?.username &&
+      credentials?.password &&
+      (credentials?.apiUrl || credentials?.m3uUrl)
+    );
+
+    if (!hasCreds) return;
+
+    const warmKey = `${String(credentials?.apiUrl || '')}|${String(credentials?.username || '')}`;
+    const prev = sessionStorage.getItem('univision:warmupKey');
+    if (prev === warmKey) return;
+    sessionStorage.setItem('univision:warmupKey', warmKey);
+
+    const run = () => {
+      warmupIptvCaches().catch((err) => {
+        logger.debug('warmup.run_failed', { message: err?.message });
+      });
+    };
+
+    // Let initial UI paint first.
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      window.requestIdleCallback(run, { timeout: 2000 });
+    } else {
+      setTimeout(run, 800);
+    }
+  }, [credentials?.apiUrl, credentials?.m3uUrl, credentials?.username, credentials?.password]);
 
   useEffect(() => {
     // Aplicar tema ao elemento html
