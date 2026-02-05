@@ -54,13 +54,11 @@ const normalizeBaseUrl = (apiUrl) => {
 // Backend API base (optional). Use same-origin by default so dev-server proxy can be used when backend is running.
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
-// In this repo, `npm run dev:all` starts only web+proxy (no backend).
-// To avoid noisy connection errors, we only try backend fallback in dev when explicitly enabled.
-const SHOULD_TRY_BACKEND_IN_DEV = String(import.meta.env.VITE_TRY_BACKEND || '').toLowerCase() === 'true';
-const shouldTryBackend = () => {
-  if (!import.meta.env.DEV) return true;
-  return SHOULD_TRY_BACKEND_IN_DEV;
-};
+// Backend auth is optional. On Cloudflare Pages we typically do NOT have an auth backend,
+// so defaulting to same-origin `/api/auth/*` causes 405 errors.
+// Only try backend auth when explicitly enabled via `VITE_TRY_BACKEND=true`.
+const SHOULD_TRY_BACKEND = String(import.meta.env.VITE_TRY_BACKEND || '').toLowerCase() === 'true';
+const shouldTryBackend = () => SHOULD_TRY_BACKEND;
 
 const api = axios.create({
   baseURL: API_URL,
