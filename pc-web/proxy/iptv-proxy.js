@@ -731,9 +731,14 @@ app.get('/series/info', async (req, res) => {
     res.set('x-cache', cache);
     res.json({ seasons, info: json?.info || null });
   } catch (error) {
-    const status = error?.statusCode || 500;
-    log(status >= 500 ? 'error' : 'warn', 'series.info_failed', { requestId: req.id, seriesId, base }, error);
-    res.status(status).json({ error: 'Falha ao buscar série', message: error?.message, requestId: req.id });
+    const networkish = isUpstreamNetworkError(error);
+    const status = networkish ? 504 : error?.statusCode || 500;
+    log(status >= 500 ? (networkish ? 'warn' : 'error') : 'warn', 'series.info_failed', { requestId: req.id, seriesId, base }, error);
+    res.status(status).json({
+      error: networkish ? 'Upstream indisponível' : 'Falha ao buscar série',
+      message: error?.message,
+      requestId: req.id,
+    });
   }
 });
 
@@ -761,8 +766,58 @@ app.get('/series/episodes', async (req, res) => {
     log('debug', 'series.episodes', { requestId: req.id, seriesId, seasonNumber, targetUrl });
     const { json, cache } = await fetchXtreamJsonCached({ targetUrl, requestId: req.id });
 
-    const episodesBySeason = json?.episodes && typeof json.episodes === 'object' ? json.episodes : {};
-    const rawList = Array.isArray(episodesBySeason[String(seasonNumber)]) ? episodesBySeason[String(seasonNumber)] : [];
+    const rawEpisodes = json?.episodes;
+
+    const pickEpisodesForSeason = (episodesValue, seasonNo) => {
+      if (!episodesValue) return [];
+
+      // Some providers return an array of episodes (with a season field).
+      if (Array.isArray(episodesValue)) {
+        const withSeason = episodesValue.filter((ep) => {
+          const s = Number(ep?.season ?? ep?.season_number ?? ep?.season_num ?? ep?.info?.season ?? NaN);
+          return Number.isFinite(s) ? s === seasonNo : false;
+        });
+        return withSeason.length > 0 ? withSeason : episodesValue;
+      }
+
+      // Most providers return an object keyed by season number => episode list
+      if (typeof episodesValue === 'object') {
+        const obj = episodesValue;
+        const keyCandidates = [String(seasonNo), String(seasonNo).padStart(2, '0')];
+
+        for (const key of keyCandidates) {
+          const v = obj[key];
+          if (Array.isArray(v)) return v;
+          if (v && typeof v === 'object' && Array.isArray(v.episodes)) return v.episodes;
+        }
+
+        // Try matching non-numeric keys like "Season 1".
+        for (const [k, v] of Object.entries(obj)) {
+          const digits = String(k).match(/\d+/g);
+          const n = digits ? Number(digits.join('')) : NaN;
+          if (n === seasonNo) {
+            if (Array.isArray(v)) return v;
+            if (v && typeof v === 'object' && Array.isArray(v.episodes)) return v.episodes;
+          }
+        }
+
+        // Fallback: flatten any arrays and filter by season if possible.
+        const flattened = [];
+        for (const v of Object.values(obj)) {
+          if (Array.isArray(v)) flattened.push(...v);
+          else if (v && typeof v === 'object' && Array.isArray(v.episodes)) flattened.push(...v.episodes);
+        }
+        const filtered = flattened.filter((ep) => {
+          const s = Number(ep?.season ?? ep?.season_number ?? ep?.season_num ?? ep?.info?.season ?? NaN);
+          return Number.isFinite(s) ? s === seasonNo : false;
+        });
+        return filtered.length > 0 ? filtered : flattened;
+      }
+
+      return [];
+    };
+
+    const rawList = pickEpisodesForSeason(rawEpisodes, seasonNumber);
 
     const episodes = rawList
       .map((ep) => {
@@ -793,9 +848,14 @@ app.get('/series/episodes', async (req, res) => {
     res.set('x-cache', cache);
     res.json({ episodes });
   } catch (error) {
-    const status = error?.statusCode || 500;
-    log(status >= 500 ? 'error' : 'warn', 'series.episodes_failed', { requestId: req.id, seriesId, seasonNumber, base }, error);
-    res.status(status).json({ error: 'Falha ao buscar episódios', message: error?.message, requestId: req.id });
+    const networkish = isUpstreamNetworkError(error);
+    const status = networkish ? 504 : error?.statusCode || 500;
+    log(status >= 500 ? (networkish ? 'warn' : 'error') : 'warn', 'series.episodes_failed', { requestId: req.id, seriesId, seasonNumber, base }, error);
+    res.status(status).json({
+      error: networkish ? 'Upstream indisponível' : 'Falha ao buscar episódios',
+      message: error?.message,
+      requestId: req.id,
+    });
   }
 });
 
@@ -1007,22 +1067,21 @@ app.get('/iptv', async (req, res) => {
     const buildCandidateUrls = (rawUrl) => {
       try {
         const u = new URL(String(rawUrl));
-        const urls = [];
 
-        // Prefer HTTPS first (many providers redirect to HTTPS).
+        // Try the provided URL first. Some IPTV providers are http-only;
+        // preferring https can cause long timeouts and never fall back.
+        const urls = [u.toString()];
+
         if (u.protocol === 'http:') {
           const httpsUrl = new URL(u.toString());
           httpsUrl.protocol = 'https:';
           urls.push(httpsUrl.toString());
-          urls.push(u.toString());
         } else if (u.protocol === 'https:') {
-          urls.push(u.toString());
           const httpUrl = new URL(u.toString());
           httpUrl.protocol = 'http:';
           urls.push(httpUrl.toString());
-        } else {
-          urls.push(u.toString());
         }
+
         return urls;
       } catch {
         return [String(rawUrl)];
