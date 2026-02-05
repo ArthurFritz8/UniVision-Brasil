@@ -21,6 +21,11 @@ const PORT = Number(process.env.PORT || 3101);
 // Keep this OFF by default; enable only if you trust your provider.
 const ALLOW_INSECURE_TLS = String(process.env.ALLOW_INSECURE_TLS || '').toLowerCase() === 'true';
 
+// Upstream providers are often slow; allow tuning per endpoint.
+// Defaults favor reliability over snappiness.
+const IPTV_TIMEOUT_MS = Number(process.env.IPTV_TIMEOUT_MS || 120000);
+const HLS_TIMEOUT_MS = Number(process.env.HLS_TIMEOUT_MS || 90000);
+
 app.disable('x-powered-by');
 // When hosted behind a reverse proxy (Render), honor x-forwarded-* headers
 // so req.protocol is https when the public URL is https.
@@ -152,6 +157,11 @@ const isUpstreamNetworkError = (err) => {
     message.includes('certificate') ||
     message.includes('self signed')
   );
+};
+
+const isTimeoutError = (err) => {
+  const code = err?.code || err?.cause?.code;
+  return code === 'ECONNABORTED' || code === 'ETIMEDOUT';
 };
 
 // --- Simple TTL + LRU cache for metadata endpoints (JSON) ---
@@ -439,16 +449,21 @@ app.get('/hls', async (req, res) => {
     const buildCandidateUrls = (rawUrl) => {
       try {
         const u = new URL(String(rawUrl));
-        const urls = [u.toString()];
+        const urls = [];
 
+        // Prefer HTTPS first (many providers redirect to HTTPS).
         if (u.protocol === 'http:') {
           const httpsUrl = new URL(u.toString());
           httpsUrl.protocol = 'https:';
           urls.push(httpsUrl.toString());
+          urls.push(u.toString());
         } else if (u.protocol === 'https:') {
+          urls.push(u.toString());
           const httpUrl = new URL(u.toString());
           httpUrl.protocol = 'http:';
           urls.push(httpUrl.toString());
+        } else {
+          urls.push(u.toString());
         }
         return urls;
       } catch {
@@ -464,6 +479,7 @@ app.get('/hls', async (req, res) => {
         },
         httpsAgent: getHttpsAgent(),
         responseType: 'arraybuffer',
+        timeout: HLS_TIMEOUT_MS,
       });
 
     const candidates = buildCandidateUrls(parsed.toString());
@@ -487,7 +503,8 @@ app.get('/hls', async (req, res) => {
       } catch (err) {
         lastError = err;
         const networkish = isUpstreamNetworkError(err);
-        if (!networkish || i === candidates.length - 1) throw err;
+        // If we already waited a full timeout, don't try another protocol (reduces long hangs).
+        if (isTimeoutError(err) || !networkish || i === candidates.length - 1) throw err;
       }
     }
 
@@ -929,18 +946,21 @@ app.get('/iptv', async (req, res) => {
     const buildCandidateUrls = (rawUrl) => {
       try {
         const u = new URL(String(rawUrl));
-        const urls = [u.toString()];
+        const urls = [];
 
-        // Many IPTV providers advertise URLs without scheme and work only on HTTPS.
-        // When a provider returns 502/5xx over HTTP, retry over HTTPS (and vice-versa).
+        // Prefer HTTPS first (many providers redirect to HTTPS).
         if (u.protocol === 'http:') {
           const httpsUrl = new URL(u.toString());
           httpsUrl.protocol = 'https:';
           urls.push(httpsUrl.toString());
+          urls.push(u.toString());
         } else if (u.protocol === 'https:') {
+          urls.push(u.toString());
           const httpUrl = new URL(u.toString());
           httpUrl.protocol = 'http:';
           urls.push(httpUrl.toString());
+        } else {
+          urls.push(u.toString());
         }
         return urls;
       } catch {
@@ -954,6 +974,7 @@ app.get('/iptv', async (req, res) => {
         family: 4, // Força IPv4
         httpsAgent: getHttpsAgent(),
         responseType: 'arraybuffer',
+        timeout: IPTV_TIMEOUT_MS,
       });
 
     const candidates = buildCandidateUrls(targetUrl);
@@ -982,7 +1003,8 @@ app.get('/iptv', async (req, res) => {
       } catch (err) {
         lastError = err;
         const networkish = isUpstreamNetworkError(err);
-        if (!networkish || i === candidates.length - 1) throw err;
+        // If we already waited a full timeout, don't try another protocol (reduces long hangs).
+        if (isTimeoutError(err) || !networkish || i === candidates.length - 1) throw err;
       }
     }
 
