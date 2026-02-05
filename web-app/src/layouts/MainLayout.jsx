@@ -4,7 +4,7 @@ import Navbar from '@components/Navbar';
 import Sidebar from '@components/Sidebar';
 import useAppStore from '@store/appStore';
 import useIptvStore from '@store/iptvStore';
-import { warmupIptvCaches } from '@services/warmup';
+import { warmupAll } from '@services/warmup';
 import { logger } from '@/utils/logger';
 
 export default function MainLayout() {
@@ -26,7 +26,7 @@ export default function MainLayout() {
     sessionStorage.setItem('univision:warmupKey', warmKey);
 
     const run = () => {
-      warmupIptvCaches().catch((err) => {
+      warmupAll().catch((err) => {
         logger.debug('warmup.run_failed', { message: err?.message });
       });
     };

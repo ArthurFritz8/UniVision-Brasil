@@ -1,4 +1,4 @@
-import { categoriesAPI, channelsAPI, contentAPI } from '@services/api';
+import { categoriesAPI, channelsAPI, contentAPI, searchAPI } from '@services/api';
 import { logger } from '@/utils/logger';
 
 const pickDefaultCategory = (cats) => {
@@ -56,4 +56,36 @@ export const warmupIptvCaches = async (opts = {}) => {
     logger.warn('warmup.failed', { ms: Date.now() - startedAt, message: err?.message });
     return { ok: false, ms: Date.now() - startedAt };
   }
+};
+
+export const warmupSearchIndex = async (opts = {}) => {
+  const { query = 'tv', limit = 10 } = opts;
+  const startedAt = Date.now();
+
+  // Guard: search requires at least 2 chars.
+  const q = String(query || '').trim();
+  if (q.length < 2) return { ok: false, ms: 0 };
+
+  try {
+    logger.debug('warmup.search.start', { query: q, limit });
+    await searchAPI.search({ query: q, limit });
+    const ms = Date.now() - startedAt;
+    logger.debug('warmup.search.done', { ms });
+    return { ok: true, ms };
+  } catch (err) {
+    const ms = Date.now() - startedAt;
+    logger.debug('warmup.search.failed', { ms, message: err?.message });
+    return { ok: false, ms };
+  }
+};
+
+export const warmupAll = async () => {
+  const base = await warmupIptvCaches();
+
+  // Run search warmup after the main warmup, in the background.
+  setTimeout(() => {
+    warmupSearchIndex().catch(() => null);
+  }, 1500);
+
+  return base;
 };

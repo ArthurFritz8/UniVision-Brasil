@@ -13,6 +13,11 @@ import {
 // Pode ser sobrescrito via VITE_IPTV_PROXY_URL, ex: http://localhost:3101
 export const IPTV_PROXY_BASE_URL = import.meta.env.VITE_IPTV_PROXY_URL || 'http://localhost:3101';
 
+// Client-side timeout when calling the proxy endpoints.
+// Heavy Xtream actions can legitimately take longer on some providers.
+const CLIENT_TIMEOUT_DEFAULT_MS = Number(import.meta.env.VITE_IPTV_CLIENT_TIMEOUT_MS || 30000);
+const CLIENT_TIMEOUT_HEAVY_MS = Number(import.meta.env.VITE_IPTV_CLIENT_HEAVY_TIMEOUT_MS || 120000);
+
 const proxyImageUrl = (url) => {
   if (!url || typeof url !== 'string') return null;
   if (url.startsWith('data:')) return url;
@@ -104,6 +109,7 @@ const createIptvClient = () => {
     get: async (url, config) => {
       // Adicionar action e outros params à URL antes de chamar o proxy
       const params = config?.params || {};
+      const action = String(params?.action || '');
       const queryString = Object.keys(params)
         .filter(key => key !== 'type' && key !== 'limit') // Remover params locais (não são da API)
         .map(key => `${key}=${encodeURIComponent(params[key])}`)
@@ -115,14 +121,18 @@ const createIptvClient = () => {
       
       const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(finalUrl)}`;
 
+      const isHeavy = action === 'get_live_streams' || action === 'get_vod_streams' || action === 'get_series' || action === 'get_series_info';
+      const timeout = isHeavy ? CLIENT_TIMEOUT_HEAVY_MS : CLIENT_TIMEOUT_DEFAULT_MS;
+
       logger.debug('iptv.proxy.get', {
-        action: params?.action,
+        action,
         params,
         hasQueryString: !!queryString,
+        timeout,
       });
       
       return axios.get(proxyUrl, {
-        timeout: 30000, // 30 segundos
+        timeout,
         headers: {
           'Content-Type': 'application/json',
         },
@@ -141,9 +151,13 @@ const createIptvClient = () => {
         : fullUrl;
       
       const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(finalUrl)}`;
+
+      const action = String(params?.action || '');
+      const isHeavy = action === 'get_live_streams' || action === 'get_vod_streams' || action === 'get_series' || action === 'get_series_info';
+      const timeout = isHeavy ? CLIENT_TIMEOUT_HEAVY_MS : CLIENT_TIMEOUT_DEFAULT_MS;
       
       return axios.post(proxyUrl, data, {
-        timeout: 30000, // 30 segundos
+        timeout,
         headers: {
           'Content-Type': 'application/json',
         },
