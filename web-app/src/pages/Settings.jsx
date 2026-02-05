@@ -47,7 +47,8 @@ export default function Settings() {
         baseUrl += '/';
       }
       
-      const fullUrl = `${baseUrl}player_api.php?username=${creds.username}&password=${creds.password}&action=get_live_streams`;
+      // Use a lightweight action for testing. `get_live_streams` is often huge and can timeout.
+      const fullUrl = `${baseUrl}player_api.php?username=${creds.username}&password=${creds.password}&action=get_live_categories`;
       
       // USAR PROXY
       const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(fullUrl)}`;
@@ -65,7 +66,7 @@ export default function Settings() {
           count: Array.isArray(jsonData) ? jsonData.length : undefined,
         });
         const count = Array.isArray(jsonData) ? jsonData.length : 0;
-        toast.success(`✅ Conexão OK! ${count} canais encontrados`);
+        toast.success(`✅ Conexão OK! ${count} categorias encontradas`);
       } else {
         const errorText = await response.text();
         logger.warn('pages.settings.test_connection.http_error', { status: response.status, errorText });

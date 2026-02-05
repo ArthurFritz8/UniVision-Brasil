@@ -7,6 +7,8 @@ import compression from 'compression';
 import https from 'https';
 import http from 'http';
 import { randomUUID } from 'crypto';
+import { parser } from 'stream-json';
+import { streamArray } from 'stream-json/streamers/StreamArray';
 
 // Configura DNS para usar servidores públicos do Google
 dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
@@ -162,6 +164,80 @@ const isUpstreamNetworkError = (err) => {
 const isTimeoutError = (err) => {
   const code = err?.code || err?.cause?.code;
   return code === 'ECONNABORTED' || code === 'ETIMEDOUT';
+};
+
+const IPTV_LIMIT_MAX = Number(process.env.IPTV_LIMIT_MAX || 300);
+
+const parseJsonArrayLimitedFromStream = async ({ stream, limit, requestId }) => {
+  const max = Math.max(1, Math.min(Number(limit) || 1, IPTV_LIMIT_MAX));
+  return await new Promise((resolve, reject) => {
+    let done = false;
+    const items = [];
+
+    const p = parser();
+    const s = streamArray();
+
+    const cleanup = () => {
+      try {
+        stream?.unpipe?.(p);
+      } catch {
+        // ignore
+      }
+      try {
+        p?.destroy?.();
+      } catch {
+        // ignore
+      }
+      try {
+        s?.destroy?.();
+      } catch {
+        // ignore
+      }
+    };
+
+    const finishOk = () => {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve(items);
+    };
+
+    const finishErr = (err) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(err);
+    };
+
+    s.on('data', ({ value }) => {
+      items.push(value);
+      if (items.length >= max) {
+        // Stop downloading the rest of the huge payload.
+        try {
+          stream?.destroy?.();
+        } catch {
+          // ignore
+        }
+        finishOk();
+      }
+    });
+    s.on('end', finishOk);
+    s.on('error', (err) => {
+      log('warn', 'iptv.stream_parse_failed', { requestId, limit: max }, err);
+      finishErr(err);
+    });
+    p.on('error', (err) => {
+      log('warn', 'iptv.stream_parse_failed', { requestId, limit: max }, err);
+      finishErr(err);
+    });
+    stream.on('error', (err) => {
+      // If we intentionally destroyed the stream after reaching the limit, ignore.
+      if (done) return;
+      finishErr(err);
+    });
+
+    stream.pipe(p).pipe(s);
+  });
 };
 
 // --- Simple TTL + LRU cache for metadata endpoints (JSON) ---
@@ -1045,9 +1121,25 @@ app.get('/iptv', async (req, res) => {
       return res.status(400).json({ error: 'URL não fornecida. Use: /iptv?url=http://...' });
     }
 
-    log('debug', 'iptv.request', { requestId: req.id, targetUrl });
+    const requestedLimitRaw = req.query.limit;
+    const requestedLimit = Number(requestedLimitRaw);
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, IPTV_LIMIT_MAX) : null;
 
-    const cacheKey = getXtreamCacheKey(targetUrl);
+    let action = null;
+    try {
+      action = new URL(String(targetUrl)).searchParams.get('action');
+    } catch {
+      action = null;
+    }
+
+    const canTruncate = Boolean(
+      limit && (action === 'get_live_streams' || action === 'get_vod_streams' || action === 'get_series')
+    );
+
+    log('debug', 'iptv.request', { requestId: req.id, targetUrl, action, limit, canTruncate });
+
+    const baseCacheKey = getXtreamCacheKey(targetUrl);
+    const cacheKey = baseCacheKey && canTruncate ? `${baseCacheKey}:limit=${limit}` : baseCacheKey;
     const ttlMs = cacheKey ? getXtreamTtlMs(targetUrl) : 0;
 
     if (cacheKey && ttlMs > 0) {
@@ -1092,7 +1184,7 @@ app.get('/iptv', async (req, res) => {
         headers: getHeaders(),
         family: 4, // Força IPv4
         httpsAgent: getHttpsAgent(),
-        responseType: 'arraybuffer',
+        responseType: canTruncate ? 'stream' : 'arraybuffer',
         timeout: IPTV_TIMEOUT_MS,
       });
 
@@ -1120,6 +1212,13 @@ app.get('/iptv', async (req, res) => {
           // If upstream is refusing or gatewaying (common on http), try next candidate.
           const retryableStatus = r.status === 500 || r.status === 502 || r.status === 503 || r.status === 504 || r.status === 403;
           if (!retryableStatus || i === candidates.length - 1) break;
+
+          // Discard upstream body before retrying
+          try {
+            r.data?.destroy?.();
+          } catch {
+            // ignore
+          }
         } catch (err) {
           lastError = err;
           const networkish = isUpstreamNetworkError(err);
@@ -1175,6 +1274,24 @@ app.get('/iptv', async (req, res) => {
     
     if (contentType?.includes('application/json')) {
       try {
+        // For huge lists, stream-parse and truncate early.
+        if (canTruncate && response.data && typeof response.data.pipe === 'function') {
+          const items = await parseJsonArrayLimitedFromStream({ stream: response.data, limit, requestId: req.id });
+          const body = JSON.stringify(items);
+
+          if (cacheKey && ttlMs > 0) {
+            cacheSet(cacheKey, body, ttlMs);
+          }
+
+          res.status(200);
+          res.set('Content-Type', 'application/json; charset=utf-8');
+          res.set('Access-Control-Allow-Origin', '*');
+          res.set('x-truncated', 'true');
+          res.set('x-limit', String(limit));
+          if (cacheKey && ttlMs > 0) res.set('x-cache', staleEntry ? 'REFRESH' : 'MISS');
+          return res.send(body);
+        }
+
         const text = Buffer.from(response.data).toString('utf8');
         const parsed = JSON.parse(text);
         log('debug', 'iptv.json', {

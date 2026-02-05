@@ -110,6 +110,7 @@ const createIptvClient = () => {
       // Adicionar action e outros params à URL antes de chamar o proxy
       const params = config?.params || {};
       const action = String(params?.action || '');
+      const limit = params?.limit;
       const queryString = Object.keys(params)
         .filter(key => key !== 'type' && key !== 'limit') // Remover params locais (não são da API)
         .map(key => `${key}=${encodeURIComponent(params[key])}`)
@@ -119,7 +120,9 @@ const createIptvClient = () => {
         ? `${fullUrl}&${queryString}`
         : fullUrl;
       
-      const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(finalUrl)}`;
+      const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(finalUrl)}${
+        limit !== undefined && limit !== null && String(limit) !== '' ? `&limit=${encodeURIComponent(limit)}` : ''
+      }`;
 
       const isHeavy = action === 'get_live_streams' || action === 'get_vod_streams' || action === 'get_series' || action === 'get_series_info';
       const timeout = isHeavy ? CLIENT_TIMEOUT_HEAVY_MS : CLIENT_TIMEOUT_DEFAULT_MS;
@@ -141,6 +144,7 @@ const createIptvClient = () => {
     post: async (url, data, config) => {
       // Similar para POST se necessário
       const params = config?.params || {};
+      const limit = params?.limit;
       const queryString = Object.keys(params)
         .filter(key => key !== 'type' && key !== 'limit')
         .map(key => `${key}=${encodeURIComponent(params[key])}`)
@@ -150,7 +154,9 @@ const createIptvClient = () => {
         ? `${fullUrl}&${queryString}`
         : fullUrl;
       
-      const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(finalUrl)}`;
+      const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(finalUrl)}${
+        limit !== undefined && limit !== null && String(limit) !== '' ? `&limit=${encodeURIComponent(limit)}` : ''
+      }`;
 
       const action = String(params?.action || '');
       const isHeavy = action === 'get_live_streams' || action === 'get_vod_streams' || action === 'get_series' || action === 'get_series_info';
