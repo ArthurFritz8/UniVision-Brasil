@@ -2,6 +2,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { logger } from '@/utils/logger';
 import { localAuth } from './localAuth';
+import { supabaseAuth } from './supabaseAuth';
 import { 
   mockChannels, 
   mockMovies, 
@@ -264,11 +265,35 @@ const makeClientError = (message, status = 400) => {
   return err;
 };
 
+const isSupabaseEnabled = () => {
+  try {
+    return Boolean(supabaseAuth?.isEnabled?.());
+  } catch {
+    return false;
+  }
+};
+
 // Auth endpoints
 // This repo often runs without a backend API. In that case, we use a local (per-device) auth database.
 // If a backend is later added, set `VITE_TRY_BACKEND=true` to prefer server auth in dev.
 export const authAPI = {
   register: async (data) => {
+    // Easiest production path: Supabase Auth (cross-device)
+    if (isSupabaseEnabled()) {
+      try {
+        const res = await supabaseAuth.register(data || {});
+        if (res?.needsEmailConfirmation) {
+          return {
+            ...res,
+            message: 'Cadastro realizado. Confirme o email para entrar.',
+          };
+        }
+        return { ...res, message: 'Cadastro realizado' };
+      } catch (err) {
+        throw makeClientError(err?.message || 'Erro ao cadastrar', 400);
+      }
+    }
+
     try {
       if (shouldTryBackend()) return await api.post('/auth/register', data);
     } catch (err) {
@@ -284,6 +309,15 @@ export const authAPI = {
   },
 
   login: async (data) => {
+    if (isSupabaseEnabled()) {
+      try {
+        const res = await supabaseAuth.login(data || {});
+        return { ...res, message: 'Login realizado' };
+      } catch (err) {
+        throw makeClientError(err?.message || 'Email ou senha incorretos', 401);
+      }
+    }
+
     try {
       if (shouldTryBackend()) return await api.post('/auth/login', data);
     } catch (err) {
@@ -300,6 +334,14 @@ export const authAPI = {
 
   logout: async () => {
     try {
+      if (isSupabaseEnabled()) {
+        try {
+          await supabaseAuth.logout();
+        } catch {
+          // ignore
+        }
+      }
+
       if (shouldTryBackend()) {
         try {
           await api.post('/auth/logout');
@@ -314,6 +356,14 @@ export const authAPI = {
   },
 
   getMe: async () => {
+    if (isSupabaseEnabled()) {
+      try {
+        return await supabaseAuth.getMe();
+      } catch (err) {
+        throw makeClientError(err?.message || 'Sessão inválida', 401);
+      }
+    }
+
     try {
       if (shouldTryBackend()) return await api.get('/auth/me');
     } catch (err) {
@@ -328,6 +378,14 @@ export const authAPI = {
   },
 
   updateProfile: async (data) => {
+    if (isSupabaseEnabled()) {
+      try {
+        return await supabaseAuth.updateProfile(data || {});
+      } catch (err) {
+        throw makeClientError(err?.message || 'Erro ao atualizar perfil', 400);
+      }
+    }
+
     try {
       if (shouldTryBackend()) return await api.put('/auth/profile', data);
     } catch (err) {

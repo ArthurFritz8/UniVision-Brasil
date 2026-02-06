@@ -30,9 +30,14 @@ export default function Register() {
 
     try {
       setLoading(true);
-      await registerUser(formData.name, formData.email, formData.password);
-      toast.success('Cadastro realizado com sucesso!');
-      navigate('/');
+      const res = await registerUser(formData.name, formData.email, formData.password);
+      if (res?.needsEmailConfirmation) {
+        toast.success('Cadastro criado! Confirme seu email para entrar.');
+        navigate('/login');
+      } else {
+        toast.success('Cadastro realizado com sucesso!');
+        navigate('/');
+      }
     } catch (error) {
       toast.error(error.response?.data?.message || 'Erro ao fazer cadastro');
     } finally {

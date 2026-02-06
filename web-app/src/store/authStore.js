@@ -2,6 +2,17 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { authAPI } from '@services/api';
 
+const isSupabaseConfigured = () => {
+  try {
+    return Boolean(
+      String(import.meta.env.VITE_SUPABASE_URL || '').trim() &&
+      String(import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim()
+    );
+  } catch {
+    return false;
+  }
+};
+
 const useAuthStore = create(
   persist(
     (set, get) => ({
@@ -25,8 +36,9 @@ const useAuthStore = create(
             isLoading: false,
           });
           
-          localStorage.setItem('token', token);
-          localStorage.setItem('user', JSON.stringify(user));
+          if (token) localStorage.setItem('token', token);
+          else localStorage.removeItem('token');
+          if (user) localStorage.setItem('user', JSON.stringify(user));
           
           return response;
         } catch (error) {
@@ -42,16 +54,18 @@ const useAuthStore = create(
           
           const user = response.user || response.data?.user;
           const token = response.token || response.data?.token;
+          const needsEmailConfirmation = Boolean(response?.needsEmailConfirmation);
           
           set({
             user: user,
             token: token,
-            isAuthenticated: true,
+            isAuthenticated: Boolean(user && !needsEmailConfirmation),
             isLoading: false,
           });
           
-          localStorage.setItem('token', token);
-          localStorage.setItem('user', JSON.stringify(user));
+          if (token) localStorage.setItem('token', token);
+          else localStorage.removeItem('token');
+          if (user) localStorage.setItem('user', JSON.stringify(user));
           
           return response;
         } catch (error) {
@@ -100,9 +114,11 @@ const useAuthStore = create(
       loadUser: async () => {
         try {
           set({ isLoading: true });
+
+          // For Supabase auth, the session is stored internally by Supabase.
+          // Don't block loadUser() just because our legacy `token` key is empty.
           const token = localStorage.getItem('token');
-          
-          if (!token) {
+          if (!token && !isSupabaseConfigured()) {
             set({ isAuthenticated: false, isLoading: false });
             return;
           }
