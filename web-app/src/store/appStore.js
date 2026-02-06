@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { createScopedJsonStorage } from '@services/scopedStorage';
 
 const useAppStore = create(
   persist(
@@ -122,6 +123,7 @@ const useAppStore = create(
     }),
     {
       name: 'app-storage',
+      storage: createScopedJsonStorage('univision'),
       partialize: (state) => ({
         theme: state.theme,
         sidebarCollapsed: state.sidebarCollapsed,

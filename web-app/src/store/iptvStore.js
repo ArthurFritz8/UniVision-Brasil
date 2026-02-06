@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { createScopedJsonStorage } from '@services/scopedStorage';
 
 const useIptvStore = create(
   persist(
@@ -40,6 +41,7 @@ const useIptvStore = create(
     }),
     {
       name: 'iptv-credentials',
+      storage: createScopedJsonStorage('univision'),
       partialize: (state) => ({ credentials: state.credentials }),
     }
   )

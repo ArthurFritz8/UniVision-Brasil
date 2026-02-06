@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { createScopedJsonStorage } from '@services/scopedStorage';
 
 const normalizeType = (rawType) => {
   const t = String(rawType || '').toLowerCase();
@@ -89,6 +90,7 @@ const useFavoritesStore = create(
     {
       name: 'favorites-storage',
       version: 1,
+      storage: createScopedJsonStorage('univision'),
     }
   )
 );

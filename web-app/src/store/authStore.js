@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { authAPI } from '@services/api';
+import useFavoritesStore from './favoritesStore';
+import useAppStore from './appStore';
+import useIptvStore from './iptvStore';
+import { setPersistScopeUserId } from '@services/scopedStorage';
 
 const isSupabaseConfigured = () => {
   try {
@@ -35,6 +39,18 @@ const useAuthStore = create(
             isAuthenticated: true,
             isLoading: false,
           });
+
+          // Scope persisted stores by authenticated user
+          setPersistScopeUserId(user?._id);
+          try {
+            await Promise.all([
+              useFavoritesStore.persist?.rehydrate?.(),
+              useAppStore.persist?.rehydrate?.(),
+              useIptvStore.persist?.rehydrate?.(),
+            ]);
+          } catch {
+            // ignore
+          }
           
           if (token) localStorage.setItem('token', token);
           else localStorage.removeItem('token');
@@ -62,6 +78,20 @@ const useAuthStore = create(
             isAuthenticated: Boolean(user && !needsEmailConfirmation),
             isLoading: false,
           });
+
+          // Scope persisted stores by authenticated user (if session exists)
+          if (user && !needsEmailConfirmation) {
+            setPersistScopeUserId(user?._id);
+            try {
+              await Promise.all([
+                useFavoritesStore.persist?.rehydrate?.(),
+                useAppStore.persist?.rehydrate?.(),
+                useIptvStore.persist?.rehydrate?.(),
+              ]);
+            } catch {
+              // ignore
+            }
+          }
           
           if (token) localStorage.setItem('token', token);
           else localStorage.removeItem('token');
@@ -85,6 +115,18 @@ const useAuthStore = create(
             token: null,
             isAuthenticated: false,
           });
+
+          // Switch scope back to anonymous to avoid leaking previous user data
+          setPersistScopeUserId('anon');
+          try {
+            await Promise.all([
+              useFavoritesStore.persist?.rehydrate?.(),
+              useAppStore.persist?.rehydrate?.(),
+              useIptvStore.persist?.rehydrate?.(),
+            ]);
+          } catch {
+            // ignore
+          }
           
           localStorage.removeItem('token');
           localStorage.removeItem('refreshToken');
@@ -138,6 +180,18 @@ const useAuthStore = create(
             isLoading: false,
           });
 
+          // Ensure stores are scoped to the loaded user (e.g., after refresh)
+          setPersistScopeUserId(user?._id);
+          try {
+            await Promise.all([
+              useFavoritesStore.persist?.rehydrate?.(),
+              useAppStore.persist?.rehydrate?.(),
+              useIptvStore.persist?.rehydrate?.(),
+            ]);
+          } catch {
+            // ignore
+          }
+
           localStorage.setItem('user', JSON.stringify(user));
         } catch (error) {
           set({
@@ -148,6 +202,8 @@ const useAuthStore = create(
           });
           localStorage.removeItem('token');
           localStorage.removeItem('user');
+
+          setPersistScopeUserId('anon');
         }
       },
       
