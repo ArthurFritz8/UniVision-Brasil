@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { channelsAPI, categoriesAPI } from '@services/api';
 import useAppStore from '@store/appStore';
@@ -16,7 +16,17 @@ export default function Live() {
   const channelsCacheRef = useRef(new Map());
   
   const selectedCategory = searchParams.get('category');
+  const query = String(searchParams.get('q') || '').trim();
   const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
+
+  const updateParams = (updates, options) => {
+    const next = new URLSearchParams(searchParams);
+    Object.entries(updates || {}).forEach(([key, value]) => {
+      if (value === null || value === undefined || String(value) === '') next.delete(key);
+      else next.set(key, String(value));
+    });
+    setSearchParams(next, options);
+  };
 
   useEffect(() => {
     // Clear page-level cache so next loads pull fresh data
@@ -90,9 +100,10 @@ export default function Live() {
           return;
         }
 
+        const isAll = String(selectedCategory) === 'all';
         const channelsRes = await channelsAPI.getAll({
-          category: selectedCategory,
-          limit: 100,
+          ...(isAll ? {} : { category: selectedCategory }),
+          limit: isAll ? 300 : 100,
         });
         if (cancelled) return;
 
@@ -119,13 +130,16 @@ export default function Live() {
   }, [selectedCategory, contentRefreshNonce]);
 
   const handleCategoryChange = (categoryId) => {
-    if (categoryId) {
-      setSearchParams({ category: categoryId });
-    } else {
-      setSearchParams({});
-    }
+    if (categoryId) updateParams({ category: categoryId });
+    else updateParams({ category: null });
     setActiveCategory(categoryId);
   };
+
+  const filteredChannels = useMemo(() => {
+    const q = query.toLowerCase();
+    if (!q) return channels;
+    return (channels || []).filter((c) => String(c?.name || c?.title || '').toLowerCase().includes(q));
+  }, [channels, query]);
 
   if (loading) {
     return <Loading />;
@@ -148,10 +162,16 @@ export default function Live() {
         onCategoryChange={handleCategoryChange}
       />
 
+      {query ? (
+        <div className="mb-4 text-sm text-gray-400">
+          Filtrando canais por: <span className="text-white font-semibold">"{query}"</span>
+        </div>
+      ) : null}
+
       <ContentGrid
-        items={channels}
+        items={filteredChannels}
         type="channel"
-        emptyMessage="Nenhum canal encontrado"
+        emptyMessage={query ? `Nenhum canal encontrado para "${query}"` : 'Nenhum canal encontrado'}
       />
     </div>
   );

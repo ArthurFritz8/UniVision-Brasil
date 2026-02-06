@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { contentAPI, categoriesAPI } from '@services/api';
 import useAppStore from '@store/appStore';
@@ -16,7 +16,17 @@ export default function Movies() {
   const moviesCacheRef = useRef(new Map());
   
   const selectedCategory = searchParams.get('category');
+  const query = String(searchParams.get('q') || '').trim();
   const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
+
+  const updateParams = (updates, options) => {
+    const next = new URLSearchParams(searchParams);
+    Object.entries(updates || {}).forEach(([key, value]) => {
+      if (value === null || value === undefined || String(value) === '') next.delete(key);
+      else next.set(key, String(value));
+    });
+    setSearchParams(next, options);
+  };
 
   useEffect(() => {
     moviesCacheRef.current.clear();
@@ -91,10 +101,11 @@ export default function Movies() {
           return;
         }
 
+        const isAll = String(selectedCategory) === 'all';
         const moviesRes = await contentAPI.getAll({
           type: 'movie',
-          category: selectedCategory,
-          limit: 100,
+          ...(isAll ? {} : { category: selectedCategory }),
+          limit: isAll ? 300 : 100,
         });
         if (cancelled) return;
 
@@ -121,13 +132,16 @@ export default function Movies() {
   }, [selectedCategory, contentRefreshNonce]);
 
   const handleCategoryChange = (categoryId) => {
-    if (categoryId) {
-      setSearchParams({ category: categoryId });
-    } else {
-      setSearchParams({});
-    }
+    if (categoryId) updateParams({ category: categoryId });
+    else updateParams({ category: null });
     setActiveCategory(categoryId);
   };
+
+  const filteredMovies = useMemo(() => {
+    const q = query.toLowerCase();
+    if (!q) return movies;
+    return (movies || []).filter((m) => String(m?.title || m?.name || '').toLowerCase().includes(q));
+  }, [movies, query]);
 
   if (loading) {
     return <Loading />;
@@ -150,10 +164,16 @@ export default function Movies() {
         onCategoryChange={handleCategoryChange}
       />
 
+      {query ? (
+        <div className="mb-4 text-sm text-gray-400">
+          Filtrando filmes por: <span className="text-white font-semibold">"{query}"</span>
+        </div>
+      ) : null}
+
       <ContentGrid
-        items={movies}
+        items={filteredMovies}
         type="movie"
-        emptyMessage="Nenhum filme encontrado"
+        emptyMessage={query ? `Nenhum filme encontrado para "${query}"` : 'Nenhum filme encontrado'}
       />
     </div>
   );

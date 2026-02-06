@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { contentAPI, categoriesAPI } from '@services/api';
 import useAppStore from '@store/appStore';
@@ -16,7 +16,17 @@ export default function Series() {
   const seriesCacheRef = useRef(new Map());
   
   const selectedCategory = searchParams.get('category');
+  const query = String(searchParams.get('q') || '').trim();
   const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
+
+  const updateParams = (updates, options) => {
+    const next = new URLSearchParams(searchParams);
+    Object.entries(updates || {}).forEach(([key, value]) => {
+      if (value === null || value === undefined || String(value) === '') next.delete(key);
+      else next.set(key, String(value));
+    });
+    setSearchParams(next, options);
+  };
 
   useEffect(() => {
     seriesCacheRef.current.clear();
@@ -89,10 +99,11 @@ export default function Series() {
           return;
         }
 
+        const isAll = String(selectedCategory) === 'all';
         const seriesRes = await contentAPI.getAll({
           type: 'series',
-          category: selectedCategory,
-          limit: 100,
+          ...(isAll ? {} : { category: selectedCategory }),
+          limit: isAll ? 300 : 100,
         });
         if (cancelled) return;
 
@@ -119,13 +130,16 @@ export default function Series() {
   }, [selectedCategory, contentRefreshNonce]);
 
   const handleCategoryChange = (categoryId) => {
-    if (categoryId) {
-      setSearchParams({ category: categoryId });
-    } else {
-      setSearchParams({});
-    }
+    if (categoryId) updateParams({ category: categoryId });
+    else updateParams({ category: null });
     setActiveCategory(categoryId);
   };
+
+  const filteredSeries = useMemo(() => {
+    const q = query.toLowerCase();
+    if (!q) return series;
+    return (series || []).filter((s) => String(s?.title || s?.name || '').toLowerCase().includes(q));
+  }, [series, query]);
 
   if (loading) {
     return <Loading />;
@@ -148,10 +162,16 @@ export default function Series() {
         onCategoryChange={handleCategoryChange}
       />
 
+      {query ? (
+        <div className="mb-4 text-sm text-gray-400">
+          Filtrando séries por: <span className="text-white font-semibold">"{query}"</span>
+        </div>
+      ) : null}
+
       <ContentGrid
-        items={series}
+        items={filteredSeries}
         type="series"
-        emptyMessage="Nenhuma série encontrada"
+        emptyMessage={query ? `Nenhuma série encontrada para "${query}"` : 'Nenhuma série encontrada'}
       />
     </div>
   );

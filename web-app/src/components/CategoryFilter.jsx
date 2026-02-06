@@ -59,9 +59,9 @@ export default function CategoryFilter({ categories = [], selectedCategory, onCa
         >
           <div className="flex gap-2 pb-2">
             <button
-              onClick={() => onCategoryChange(null)}
+              onClick={() => onCategoryChange('all')}
               className={`px-4 py-2 rounded-lg whitespace-nowrap transition-smooth ${
-                !selectedCategory
+                selectedCategory === 'all'
                   ? 'bg-primary-600 text-white'
                   : 'bg-dark-800 text-gray-300 hover:bg-dark-700'
               }`}

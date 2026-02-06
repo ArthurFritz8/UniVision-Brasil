@@ -1,4 +1,4 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Search, User, LogOut, Menu, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import useAuthStore from '@store/authStore';
@@ -9,6 +9,7 @@ import { logger } from '@/utils/logger';
 
 export default function Navbar() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { isAuthenticated, user, logout } = useAuthStore();
   const {
     toggleSidebar,
@@ -24,12 +25,36 @@ export default function Navbar() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
+  const pathname = String(location?.pathname || '');
+  const isLive = pathname.startsWith('/live');
+  const isMovies = pathname.startsWith('/movies');
+  const isSeries = pathname.startsWith('/series');
+
+  const searchPlaceholder = isLive
+    ? 'Buscar canais (TV ao Vivo)...'
+    : isMovies
+      ? 'Buscar filmes...'
+      : isSeries
+        ? 'Buscar séries...'
+        : 'Buscar filmes, séries...';
+
   const handleSearch = (e) => {
     e.preventDefault();
-    if (searchQuery.trim()) {
-      navigate(`/search?q=${encodeURIComponent(searchQuery)}`);
+    const q = String(searchQuery || '').trim();
+    if (!q) return;
+
+    // Contextual search: filters the current catalog page via URL param.
+    if (isLive || isMovies || isSeries) {
+      const params = new URLSearchParams(location.search || '');
+      params.set('q', q);
+      navigate(`${pathname}?${params.toString()}`);
       setSearchQuery('');
+      return;
     }
+
+    // Global search (movies + series)
+    navigate(`/search?q=${encodeURIComponent(q)}`);
+    setSearchQuery('');
   };
 
   const handleLogout = async () => {
@@ -94,7 +119,7 @@ export default function Navbar() {
               <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`} size={20} />
               <input
                 type="text"
-                placeholder="Buscar canais, filmes, séries..."
+                placeholder={searchPlaceholder}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 bg-dark-800 border border-dark-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
@@ -172,7 +197,7 @@ export default function Navbar() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
             <input
               type="text"
-              placeholder="Buscar..."
+              placeholder={searchPlaceholder}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2 bg-dark-800 border border-dark-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
