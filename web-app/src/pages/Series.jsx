@@ -65,7 +65,7 @@ export default function Series() {
         if (!selectedCategory) {
           const fallback = pickDefaultCategory(cats);
           if (fallback) {
-            setSearchParams({ category: fallback }, { replace: true });
+            updateParams({ category: fallback }, { replace: true });
             setActiveCategory(fallback);
             return;
           }
