@@ -19,6 +19,16 @@ export default function Live() {
   const query = String(searchParams.get('q') || '').trim();
   const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
 
+  const normalizeText = (value) => {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
   const updateParams = (updates, options) => {
     const next = new URLSearchParams(searchParams);
     Object.entries(updates || {}).forEach(([key, value]) => {
@@ -90,25 +100,35 @@ export default function Live() {
     let cancelled = false;
     const loadChannels = async () => {
       try {
-        if (!selectedCategory) return;
+        const q = normalizeText(query);
+        const isSearching = q.length >= 2;
+
+        // When searching, search across ALL live channels (ignore category) for better UX.
+        if (!selectedCategory && !isSearching) return;
         setLoading(true);
 
-        const cached = channelsCacheRef.current.get(String(selectedCategory));
-        if (cached) {
-          setChannels(cached);
+        const cacheKey = isSearching ? '__search_all__' : String(selectedCategory);
+        const desiredLimit = isSearching ? 2000 : (String(selectedCategory) === 'all' ? 300 : 100);
+
+        const cachedEntry = channelsCacheRef.current.get(cacheKey);
+        const cachedList = Array.isArray(cachedEntry?.list) ? cachedEntry.list : (Array.isArray(cachedEntry) ? cachedEntry : null);
+        const cachedLimit = Number.isFinite(Number(cachedEntry?.limit)) ? Number(cachedEntry.limit) : (cachedList ? cachedList.length : 0);
+
+        if (cachedList && cachedList.length > 0 && cachedLimit >= desiredLimit) {
+          setChannels(cachedList);
           setLoading(false);
           return;
         }
 
         const isAll = String(selectedCategory) === 'all';
         const channelsRes = await channelsAPI.getAll({
-          ...(isAll ? {} : { category: selectedCategory }),
-          limit: isAll ? 300 : 100,
+          ...(isSearching ? {} : (isAll ? {} : { category: selectedCategory })),
+          limit: desiredLimit,
         });
         if (cancelled) return;
 
         const list = channelsRes?.channels || [];
-        channelsCacheRef.current.set(String(selectedCategory), list);
+        channelsCacheRef.current.set(cacheKey, { list, limit: desiredLimit });
 
         logger.debug('pages.live.data_loaded', {
           channels: list.length,
@@ -127,7 +147,7 @@ export default function Live() {
     return () => {
       cancelled = true;
     };
-  }, [selectedCategory, contentRefreshNonce]);
+  }, [selectedCategory, query, contentRefreshNonce]);
 
   const handleCategoryChange = (categoryId) => {
     if (categoryId) updateParams({ category: categoryId });
@@ -136,9 +156,9 @@ export default function Live() {
   };
 
   const filteredChannels = useMemo(() => {
-    const q = query.toLowerCase();
+    const q = normalizeText(query);
     if (!q) return channels;
-    return (channels || []).filter((c) => String(c?.name || c?.title || '').toLowerCase().includes(q));
+    return (channels || []).filter((c) => normalizeText(c?.name || c?.title || '').includes(q));
   }, [channels, query]);
 
   if (loading) {
