@@ -414,6 +414,9 @@ export const channelsAPI = {
       if (params?.category) {
         clientParams.category_id = params.category;
       }
+      if (params?.limit !== undefined && params?.limit !== null && String(params.limit) !== '') {
+        clientParams.limit = params.limit;
+      }
       if (params?.q) {
         clientParams.q = params.q;
       }
@@ -547,6 +550,9 @@ export const contentAPI = {
       const clientParams = { action };
       if (params?.category) {
         clientParams.category_id = params.category;
+      }
+      if (params?.limit !== undefined && params?.limit !== null && String(params.limit) !== '') {
+        clientParams.limit = params.limit;
       }
       if (params?.q) {
         clientParams.q = params.q;
