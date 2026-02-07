@@ -171,6 +171,15 @@ const isTimeoutError = (err) => {
 
 const IPTV_LIMIT_MAX = Number(process.env.IPTV_LIMIT_MAX || 300);
 
+const normalizeText = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 const parseJsonArrayLimitedFromStream = async ({ stream, limit, requestId }) => {
   const max = Math.max(1, Math.min(Number(limit) || 1, IPTV_LIMIT_MAX));
   return await new Promise((resolve, reject) => {
@@ -235,6 +244,92 @@ const parseJsonArrayLimitedFromStream = async ({ stream, limit, requestId }) => 
     });
     stream.on('error', (err) => {
       // If we intentionally destroyed the stream after reaching the limit, ignore.
+      if (done) return;
+      finishErr(err);
+    });
+
+    stream.pipe(p).pipe(s);
+  });
+};
+
+const parseJsonArrayFilteredFromStream = async ({ stream, limit, requestId, query }) => {
+  const q = normalizeText(query);
+  const max = Math.max(1, Math.min(Number(limit) || 1, IPTV_LIMIT_MAX));
+
+  return await new Promise((resolve, reject) => {
+    let done = false;
+    const items = [];
+
+    const p = parser();
+    const s = streamArray();
+
+    const cleanup = () => {
+      try {
+        stream?.unpipe?.(p);
+      } catch {
+        // ignore
+      }
+      try {
+        p?.destroy?.();
+      } catch {
+        // ignore
+      }
+      try {
+        s?.destroy?.();
+      } catch {
+        // ignore
+      }
+    };
+
+    const finishOk = () => {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve(items);
+    };
+
+    const finishErr = (err) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(err);
+    };
+
+    const matches = (value) => {
+      if (!q) return true;
+      const name =
+        value?.name ??
+        value?.title ??
+        value?.stream_display_name ??
+        value?.stream_name ??
+        value?.tv_name ??
+        '';
+      return normalizeText(name).includes(q);
+    };
+
+    s.on('data', ({ value }) => {
+      if (matches(value)) {
+        items.push(value);
+        if (items.length >= max) {
+          try {
+            stream?.destroy?.();
+          } catch {
+            // ignore
+          }
+          finishOk();
+        }
+      }
+    });
+    s.on('end', finishOk);
+    s.on('error', (err) => {
+      log('warn', 'iptv.stream_parse_failed', { requestId, limit: max, mode: 'filter' }, err);
+      finishErr(err);
+    });
+    p.on('error', (err) => {
+      log('warn', 'iptv.stream_parse_failed', { requestId, limit: max, mode: 'filter' }, err);
+      finishErr(err);
+    });
+    stream.on('error', (err) => {
       if (done) return;
       finishErr(err);
     });
@@ -1128,6 +1223,11 @@ app.get('/iptv', async (req, res) => {
     const requestedLimit = Number(requestedLimitRaw);
     const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, IPTV_LIMIT_MAX) : null;
 
+    const qRaw = req.query.q;
+    const q = typeof qRaw === 'string' ? qRaw : Array.isArray(qRaw) ? qRaw[0] : '';
+    const qNorm = normalizeText(q);
+    const shouldFilter = Boolean(qNorm && qNorm.length >= 2);
+
     let action = null;
     try {
       action = new URL(String(targetUrl)).searchParams.get('action');
@@ -1139,10 +1239,14 @@ app.get('/iptv', async (req, res) => {
       limit && (action === 'get_live_streams' || action === 'get_vod_streams' || action === 'get_series')
     );
 
-    log('debug', 'iptv.request', { requestId: req.id, targetUrl, action, limit, canTruncate });
+    const canFilter = Boolean(canTruncate && shouldFilter);
+
+    log('debug', 'iptv.request', { requestId: req.id, targetUrl, action, limit, canTruncate, canFilter, q: shouldFilter ? qNorm : undefined });
 
     const baseCacheKey = getXtreamCacheKey(targetUrl);
-    const cacheKey = baseCacheKey && canTruncate ? `${baseCacheKey}:limit=${limit}` : baseCacheKey;
+    const cacheKey = baseCacheKey && canTruncate
+      ? `${baseCacheKey}:limit=${limit}${canFilter ? `:q=${encodeURIComponent(qNorm).slice(0, 180)}` : ''}`
+      : baseCacheKey;
     const ttlMs = cacheKey ? getXtreamTtlMs(targetUrl) : 0;
 
     if (cacheKey && ttlMs > 0) {
@@ -1279,7 +1383,9 @@ app.get('/iptv', async (req, res) => {
       try {
         // For huge lists, stream-parse and truncate early.
         if (canTruncate && response.data && typeof response.data.pipe === 'function') {
-          const items = await parseJsonArrayLimitedFromStream({ stream: response.data, limit, requestId: req.id });
+          const items = canFilter
+            ? await parseJsonArrayFilteredFromStream({ stream: response.data, limit, requestId: req.id, query: qNorm })
+            : await parseJsonArrayLimitedFromStream({ stream: response.data, limit, requestId: req.id });
           const body = JSON.stringify(items);
 
           if (cacheKey && ttlMs > 0) {
@@ -1291,6 +1397,7 @@ app.get('/iptv', async (req, res) => {
           res.set('Access-Control-Allow-Origin', '*');
           res.set('x-truncated', 'true');
           res.set('x-limit', String(limit));
+          if (canFilter) res.set('x-filtered', 'true');
           if (cacheKey && ttlMs > 0) res.set('x-cache', staleEntry ? 'REFRESH' : 'MISS');
           return res.send(body);
         }

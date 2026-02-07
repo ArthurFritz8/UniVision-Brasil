@@ -20,6 +20,16 @@ export default function Series() {
   const isSearching = query.length > 0;
   const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
 
+  const normalizeText = (value) => {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
   const updateParams = (updates, options) => {
     const next = new URLSearchParams(searchParams);
     Object.entries(updates || {}).forEach(([key, value]) => {
@@ -52,6 +62,7 @@ export default function Series() {
     let cancelled = false;
     const loadCategories = async () => {
       try {
+        const searchingAll = normalizeText(query).length >= 2;
         const cachedCats = Array.isArray(categoriesCache?.series) ? categoriesCache.series : null;
 
         const cats = cachedCats?.length
@@ -64,7 +75,7 @@ export default function Series() {
         if (!cachedCats?.length) updateCategoriesCache?.('series', cats);
 
         // During search, allow no category (search will be global)
-        if (!selectedCategory && !isSearching) {
+        if (!selectedCategory && !searchingAll) {
           const fallback = pickDefaultCategory(cats);
           if (fallback) {
             updateParams({ category: fallback }, { replace: true });
@@ -85,20 +96,21 @@ export default function Series() {
     return () => {
       cancelled = true;
     };
-  }, [contentRefreshNonce, isSearching]);
+  }, [contentRefreshNonce, query, selectedCategory]);
 
   useEffect(() => {
     let cancelled = false;
     const loadSeries = async () => {
       try {
-        const q = String(query || '').trim();
+        const qRaw = String(query || '').trim();
+        const q = normalizeText(qRaw);
         const searchingAll = q.length >= 2;
 
         if (!selectedCategory && !searchingAll) return;
         setLoading(true);
 
-        const cacheKey = searchingAll ? '__search_all__' : String(selectedCategory);
-        const desiredLimit = searchingAll ? 2000 : (String(selectedCategory) === 'all' ? 300 : 100);
+        const cacheKey = searchingAll ? `__search__:${q}` : String(selectedCategory);
+        const desiredLimit = searchingAll ? 300 : (String(selectedCategory) === 'all' ? 300 : 100);
 
         const cachedEntry = seriesCacheRef.current.get(cacheKey);
         const cachedList = Array.isArray(cachedEntry?.list)
@@ -117,7 +129,7 @@ export default function Series() {
         const isAll = String(selectedCategory) === 'all';
         const seriesRes = await contentAPI.getAll({
           type: 'series',
-          ...(searchingAll ? {} : (isAll ? {} : { category: selectedCategory })),
+          ...(searchingAll ? { q: qRaw } : (isAll ? {} : { category: selectedCategory })),
           limit: desiredLimit,
         });
         if (cancelled) return;
@@ -151,9 +163,9 @@ export default function Series() {
   };
 
   const filteredSeries = useMemo(() => {
-    const q = query.toLowerCase();
+    const q = normalizeText(query);
     if (!q) return series;
-    return (series || []).filter((s) => String(s?.title || s?.name || '').toLowerCase().includes(q));
+    return (series || []).filter((s) => normalizeText(s?.title || s?.name || '').includes(q));
   }, [series, query]);
 
   if (loading) {

@@ -111,8 +111,9 @@ const createIptvClient = () => {
       const params = config?.params || {};
       const action = String(params?.action || '');
       const limit = params?.limit;
+      const q = params?.q;
       const queryString = Object.keys(params)
-        .filter(key => key !== 'type' && key !== 'limit') // Remover params locais (não são da API)
+        .filter(key => key !== 'type' && key !== 'limit' && key !== 'q') // Remover params locais (não são da API)
         .map(key => `${key}=${encodeURIComponent(params[key])}`)
         .join('&');
       
@@ -122,6 +123,8 @@ const createIptvClient = () => {
       
       const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(finalUrl)}${
         limit !== undefined && limit !== null && String(limit) !== '' ? `&limit=${encodeURIComponent(limit)}` : ''
+      }${
+        q !== undefined && q !== null && String(q).trim() !== '' ? `&q=${encodeURIComponent(String(q))}` : ''
       }`;
 
       const isHeavy = action === 'get_live_streams' || action === 'get_vod_streams' || action === 'get_series' || action === 'get_series_info';
@@ -145,8 +148,9 @@ const createIptvClient = () => {
       // Similar para POST se necessário
       const params = config?.params || {};
       const limit = params?.limit;
+      const q = params?.q;
       const queryString = Object.keys(params)
-        .filter(key => key !== 'type' && key !== 'limit')
+        .filter(key => key !== 'type' && key !== 'limit' && key !== 'q')
         .map(key => `${key}=${encodeURIComponent(params[key])}`)
         .join('&');
       
@@ -156,6 +160,8 @@ const createIptvClient = () => {
       
       const proxyUrl = `${IPTV_PROXY_BASE_URL}/iptv?url=${encodeURIComponent(finalUrl)}${
         limit !== undefined && limit !== null && String(limit) !== '' ? `&limit=${encodeURIComponent(limit)}` : ''
+      }${
+        q !== undefined && q !== null && String(q).trim() !== '' ? `&q=${encodeURIComponent(String(q))}` : ''
       }`;
 
       const action = String(params?.action || '');
@@ -408,6 +414,9 @@ export const channelsAPI = {
       if (params?.category) {
         clientParams.category_id = params.category;
       }
+      if (params?.q) {
+        clientParams.q = params.q;
+      }
       return client.get('', { params: clientParams }).then(res => {
         // Transformar resposta Xtream Codes para nosso formato
         // res é a resposta direta do axios (já com .data extraído pelo interceptor)
@@ -538,6 +547,9 @@ export const contentAPI = {
       const clientParams = { action };
       if (params?.category) {
         clientParams.category_id = params.category;
+      }
+      if (params?.q) {
+        clientParams.q = params.q;
       }
       
       return client.get('', { params: clientParams }).then(res => {

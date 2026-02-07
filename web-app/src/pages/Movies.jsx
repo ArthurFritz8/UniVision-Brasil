@@ -20,6 +20,16 @@ export default function Movies() {
   const isSearching = query.length > 0;
   const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
 
+  const normalizeText = (value) => {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
   const updateParams = (updates, options) => {
     const next = new URLSearchParams(searchParams);
     Object.entries(updates || {}).forEach(([key, value]) => {
@@ -52,6 +62,7 @@ export default function Movies() {
     let cancelled = false;
     const loadCategories = async () => {
       try {
+        const searchingAll = normalizeText(query).length >= 2;
         const cachedCats = Array.isArray(categoriesCache?.vod) ? categoriesCache.vod : null;
 
         const cats = cachedCats?.length
@@ -65,7 +76,7 @@ export default function Movies() {
 
         // Evitar carregar o catálogo inteiro (sem categoria) porque é lento em muitos provedores.
         // Porém, durante busca (q), permitimos "sem categoria" para busca geral.
-        if (!selectedCategory && !isSearching) {
+        if (!selectedCategory && !searchingAll) {
           const fallback = pickDefaultCategory(cats);
           if (fallback) {
             updateParams({ category: fallback }, { replace: true });
@@ -87,20 +98,21 @@ export default function Movies() {
     return () => {
       cancelled = true;
     };
-  }, [contentRefreshNonce, isSearching]);
+  }, [contentRefreshNonce, query, selectedCategory]);
 
   useEffect(() => {
     let cancelled = false;
     const loadMovies = async () => {
       try {
-        const q = String(query || '').trim();
+        const qRaw = String(query || '').trim();
+        const q = normalizeText(qRaw);
         const searchingAll = q.length >= 2;
 
         if (!selectedCategory && !searchingAll) return;
         setLoading(true);
 
-        const cacheKey = searchingAll ? '__search_all__' : String(selectedCategory);
-        const desiredLimit = searchingAll ? 2000 : (String(selectedCategory) === 'all' ? 300 : 100);
+        const cacheKey = searchingAll ? `__search__:${q}` : String(selectedCategory);
+        const desiredLimit = searchingAll ? 300 : (String(selectedCategory) === 'all' ? 300 : 100);
 
         const cachedEntry = moviesCacheRef.current.get(cacheKey);
         const cachedList = Array.isArray(cachedEntry?.list)
@@ -119,7 +131,7 @@ export default function Movies() {
         const isAll = String(selectedCategory) === 'all';
         const moviesRes = await contentAPI.getAll({
           type: 'movie',
-          ...(searchingAll ? {} : (isAll ? {} : { category: selectedCategory })),
+          ...(searchingAll ? { q: qRaw } : (isAll ? {} : { category: selectedCategory })),
           limit: desiredLimit,
         });
         if (cancelled) return;
@@ -153,9 +165,9 @@ export default function Movies() {
   };
 
   const filteredMovies = useMemo(() => {
-    const q = query.toLowerCase();
+    const q = normalizeText(query);
     if (!q) return movies;
-    return (movies || []).filter((m) => String(m?.title || m?.name || '').toLowerCase().includes(q));
+    return (movies || []).filter((m) => normalizeText(m?.title || m?.name || '').includes(q));
   }, [movies, query]);
 
   if (loading) {

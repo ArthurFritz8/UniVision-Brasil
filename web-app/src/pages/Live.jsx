@@ -63,6 +63,7 @@ export default function Live() {
     let cancelled = false;
     const loadCategories = async () => {
       try {
+        const searchingAll = normalizeText(query).length >= 2;
         const cachedCats = Array.isArray(categoriesCache?.live) ? categoriesCache.live : null;
 
         const cats = cachedCats?.length
@@ -75,7 +76,7 @@ export default function Live() {
         if (!cachedCats?.length) updateCategoriesCache?.('live', cats);
 
         // During search, allow no category (search will be global)
-        if (!selectedCategory && !isSearching) {
+        if (!selectedCategory && !searchingAll) {
           const fallback = pickDefaultCategory(cats);
           if (fallback) {
             updateParams({ category: fallback }, { replace: true });
@@ -96,21 +97,22 @@ export default function Live() {
     return () => {
       cancelled = true;
     };
-  }, [contentRefreshNonce, isSearching]);
+  }, [contentRefreshNonce, query, selectedCategory]);
 
   useEffect(() => {
     let cancelled = false;
     const loadChannels = async () => {
       try {
-        const q = normalizeText(query);
+        const qRaw = String(query || '').trim();
+        const q = normalizeText(qRaw);
         const isSearching = q.length >= 2;
 
         // When searching, search across ALL live channels (ignore category) for better UX.
         if (!selectedCategory && !isSearching) return;
         setLoading(true);
 
-        const cacheKey = isSearching ? '__search_all__' : String(selectedCategory);
-        const desiredLimit = isSearching ? 2000 : (String(selectedCategory) === 'all' ? 300 : 100);
+        const cacheKey = isSearching ? `__search__:${q}` : String(selectedCategory);
+        const desiredLimit = isSearching ? 300 : (String(selectedCategory) === 'all' ? 300 : 100);
 
         const cachedEntry = channelsCacheRef.current.get(cacheKey);
         const cachedList = Array.isArray(cachedEntry?.list) ? cachedEntry.list : (Array.isArray(cachedEntry) ? cachedEntry : null);
@@ -124,7 +126,7 @@ export default function Live() {
 
         const isAll = String(selectedCategory) === 'all';
         const channelsRes = await channelsAPI.getAll({
-          ...(isSearching ? {} : (isAll ? {} : { category: selectedCategory })),
+          ...(isSearching ? { q: qRaw } : (isAll ? {} : { category: selectedCategory })),
           limit: desiredLimit,
         });
         if (cancelled) return;
