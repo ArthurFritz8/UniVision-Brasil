@@ -17,6 +17,7 @@ export default function Movies() {
   
   const selectedCategory = searchParams.get('category');
   const query = String(searchParams.get('q') || '').trim();
+  const isSearching = query.length > 0;
   const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
 
   const updateParams = (updates, options) => {
@@ -63,7 +64,8 @@ export default function Movies() {
         if (!cachedCats?.length) updateCategoriesCache?.('vod', cats);
 
         // Evitar carregar o catálogo inteiro (sem categoria) porque é lento em muitos provedores.
-        if (!selectedCategory) {
+        // Porém, durante busca (q), permitimos "sem categoria" para busca geral.
+        if (!selectedCategory && !isSearching) {
           const fallback = pickDefaultCategory(cats);
           if (fallback) {
             updateParams({ category: fallback }, { replace: true });
@@ -85,18 +87,31 @@ export default function Movies() {
     return () => {
       cancelled = true;
     };
-  }, [contentRefreshNonce]);
+  }, [contentRefreshNonce, isSearching]);
 
   useEffect(() => {
     let cancelled = false;
     const loadMovies = async () => {
       try {
-        if (!selectedCategory) return;
+        const q = String(query || '').trim();
+        const searchingAll = q.length >= 2;
+
+        if (!selectedCategory && !searchingAll) return;
         setLoading(true);
 
-        const cached = moviesCacheRef.current.get(String(selectedCategory));
-        if (cached) {
-          setMovies(cached);
+        const cacheKey = searchingAll ? '__search_all__' : String(selectedCategory);
+        const desiredLimit = searchingAll ? 2000 : (String(selectedCategory) === 'all' ? 300 : 100);
+
+        const cachedEntry = moviesCacheRef.current.get(cacheKey);
+        const cachedList = Array.isArray(cachedEntry?.list)
+          ? cachedEntry.list
+          : (Array.isArray(cachedEntry) ? cachedEntry : null);
+        const cachedLimit = Number.isFinite(Number(cachedEntry?.limit))
+          ? Number(cachedEntry.limit)
+          : (cachedList ? cachedList.length : 0);
+
+        if (cachedList && cachedList.length > 0 && cachedLimit >= desiredLimit) {
+          setMovies(cachedList);
           setLoading(false);
           return;
         }
@@ -104,13 +119,13 @@ export default function Movies() {
         const isAll = String(selectedCategory) === 'all';
         const moviesRes = await contentAPI.getAll({
           type: 'movie',
-          ...(isAll ? {} : { category: selectedCategory }),
-          limit: isAll ? 300 : 100,
+          ...(searchingAll ? {} : (isAll ? {} : { category: selectedCategory })),
+          limit: desiredLimit,
         });
         if (cancelled) return;
 
         const list = moviesRes?.contents || [];
-        moviesCacheRef.current.set(String(selectedCategory), list);
+        moviesCacheRef.current.set(cacheKey, { list, limit: desiredLimit });
 
         logger.debug('pages.movies.data_loaded', {
           movies: list.length,
@@ -129,7 +144,7 @@ export default function Movies() {
     return () => {
       cancelled = true;
     };
-  }, [selectedCategory, contentRefreshNonce]);
+  }, [selectedCategory, query, contentRefreshNonce]);
 
   const handleCategoryChange = (categoryId) => {
     if (categoryId) updateParams({ category: categoryId });
@@ -158,15 +173,18 @@ export default function Movies() {
         </p>
       </div>
 
-      <CategoryFilter
-        categories={categories}
-        selectedCategory={selectedCategory}
-        onCategoryChange={handleCategoryChange}
-      />
+      {isSearching ? null : (
+        <CategoryFilter
+          categories={categories}
+          selectedCategory={selectedCategory}
+          onCategoryChange={handleCategoryChange}
+        />
+      )}
 
       {query ? (
         <div className="mb-4 text-sm text-gray-400">
-          Filtrando filmes por: <span className="text-white font-semibold">"{query}"</span>
+          Resultados para: <span className="text-white font-semibold">"{query}"</span>
+          <span className="text-gray-500"> (buscando em todo o catálogo)</span>
         </div>
       ) : null}
 

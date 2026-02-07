@@ -17,6 +17,7 @@ export default function Live() {
   
   const selectedCategory = searchParams.get('category');
   const query = String(searchParams.get('q') || '').trim();
+  const isSearching = query.length > 0;
   const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
 
   const normalizeText = (value) => {
@@ -73,7 +74,8 @@ export default function Live() {
         setCategories(cats);
         if (!cachedCats?.length) updateCategoriesCache?.('live', cats);
 
-        if (!selectedCategory) {
+        // During search, allow no category (search will be global)
+        if (!selectedCategory && !isSearching) {
           const fallback = pickDefaultCategory(cats);
           if (fallback) {
             updateParams({ category: fallback }, { replace: true });
@@ -94,7 +96,7 @@ export default function Live() {
     return () => {
       cancelled = true;
     };
-  }, [contentRefreshNonce]);
+  }, [contentRefreshNonce, isSearching]);
 
   useEffect(() => {
     let cancelled = false;
@@ -176,15 +178,18 @@ export default function Live() {
         </p>
       </div>
 
-      <CategoryFilter
-        categories={categories}
-        selectedCategory={selectedCategory}
-        onCategoryChange={handleCategoryChange}
-      />
+      {isSearching ? null : (
+        <CategoryFilter
+          categories={categories}
+          selectedCategory={selectedCategory}
+          onCategoryChange={handleCategoryChange}
+        />
+      )}
 
       {query ? (
         <div className="mb-4 text-sm text-gray-400">
-          Filtrando canais por: <span className="text-white font-semibold">"{query}"</span>
+          Resultados para: <span className="text-white font-semibold">"{query}"</span>
+          <span className="text-gray-500"> (buscando em todos os canais)</span>
         </div>
       ) : null}
 

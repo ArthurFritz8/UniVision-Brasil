@@ -17,6 +17,7 @@ export default function Series() {
   
   const selectedCategory = searchParams.get('category');
   const query = String(searchParams.get('q') || '').trim();
+  const isSearching = query.length > 0;
   const { setActiveCategory, categoriesCache, updateCategoriesCache, contentRefreshNonce } = useAppStore();
 
   const updateParams = (updates, options) => {
@@ -62,7 +63,8 @@ export default function Series() {
         setCategories(cats);
         if (!cachedCats?.length) updateCategoriesCache?.('series', cats);
 
-        if (!selectedCategory) {
+        // During search, allow no category (search will be global)
+        if (!selectedCategory && !isSearching) {
           const fallback = pickDefaultCategory(cats);
           if (fallback) {
             updateParams({ category: fallback }, { replace: true });
@@ -83,18 +85,31 @@ export default function Series() {
     return () => {
       cancelled = true;
     };
-  }, [contentRefreshNonce]);
+  }, [contentRefreshNonce, isSearching]);
 
   useEffect(() => {
     let cancelled = false;
     const loadSeries = async () => {
       try {
-        if (!selectedCategory) return;
+        const q = String(query || '').trim();
+        const searchingAll = q.length >= 2;
+
+        if (!selectedCategory && !searchingAll) return;
         setLoading(true);
 
-        const cached = seriesCacheRef.current.get(String(selectedCategory));
-        if (cached) {
-          setSeries(cached);
+        const cacheKey = searchingAll ? '__search_all__' : String(selectedCategory);
+        const desiredLimit = searchingAll ? 2000 : (String(selectedCategory) === 'all' ? 300 : 100);
+
+        const cachedEntry = seriesCacheRef.current.get(cacheKey);
+        const cachedList = Array.isArray(cachedEntry?.list)
+          ? cachedEntry.list
+          : (Array.isArray(cachedEntry) ? cachedEntry : null);
+        const cachedLimit = Number.isFinite(Number(cachedEntry?.limit))
+          ? Number(cachedEntry.limit)
+          : (cachedList ? cachedList.length : 0);
+
+        if (cachedList && cachedList.length > 0 && cachedLimit >= desiredLimit) {
+          setSeries(cachedList);
           setLoading(false);
           return;
         }
@@ -102,13 +117,13 @@ export default function Series() {
         const isAll = String(selectedCategory) === 'all';
         const seriesRes = await contentAPI.getAll({
           type: 'series',
-          ...(isAll ? {} : { category: selectedCategory }),
-          limit: isAll ? 300 : 100,
+          ...(searchingAll ? {} : (isAll ? {} : { category: selectedCategory })),
+          limit: desiredLimit,
         });
         if (cancelled) return;
 
         const list = seriesRes?.contents || [];
-        seriesCacheRef.current.set(String(selectedCategory), list);
+        seriesCacheRef.current.set(cacheKey, { list, limit: desiredLimit });
 
         logger.debug('pages.series.data_loaded', {
           series: list.length,
@@ -127,7 +142,7 @@ export default function Series() {
     return () => {
       cancelled = true;
     };
-  }, [selectedCategory, contentRefreshNonce]);
+  }, [selectedCategory, query, contentRefreshNonce]);
 
   const handleCategoryChange = (categoryId) => {
     if (categoryId) updateParams({ category: categoryId });
@@ -156,15 +171,18 @@ export default function Series() {
         </p>
       </div>
 
-      <CategoryFilter
-        categories={categories}
-        selectedCategory={selectedCategory}
-        onCategoryChange={handleCategoryChange}
-      />
+      {isSearching ? null : (
+        <CategoryFilter
+          categories={categories}
+          selectedCategory={selectedCategory}
+          onCategoryChange={handleCategoryChange}
+        />
+      )}
 
       {query ? (
         <div className="mb-4 text-sm text-gray-400">
-          Filtrando séries por: <span className="text-white font-semibold">"{query}"</span>
+          Resultados para: <span className="text-white font-semibold">"{query}"</span>
+          <span className="text-gray-500"> (buscando em todo o catálogo)</span>
         </div>
       ) : null}
 
