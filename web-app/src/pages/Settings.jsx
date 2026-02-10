@@ -5,6 +5,7 @@ import useIptvStore from '@store/iptvStore';
 import toast from 'react-hot-toast';
 import { IPTV_PROXY_BASE_URL, categoriesAPI, resetSearchCaches } from '@services/api';
 import { logger } from '@/utils/logger';
+import { iptvCredentialsDb } from '@services/iptvCredentialsDb';
 
 export default function Settings() {
   const {
@@ -20,31 +21,30 @@ export default function Settings() {
     updateCategoriesCache,
   } = useAppStore();
   const { credentials, setCredentials, clearCredentials } = useIptvStore();
-  const [formData, setFormData] = useState(credentials);
+  const [formData, setFormData] = useState({ username: '', password: '', apiUrl: '', m3uUrl: '' });
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const handleSaveCredentials = () => {
-    setCredentials(formData);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+  const handleSaveCredentials = async () => {
+    try {
+      setCredentials(formData);
+      if (iptvCredentialsDb.isEnabled()) {
+        await iptvCredentialsDb.upsertMyCredentials(formData);
+      }
+
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (error) {
+      logger.error('pages.settings.save_credentials_failed', undefined, error);
+      toast.error('Falha ao salvar credenciais');
+    }
   };
 
   const handleTestConnection = async () => {
     setTesting(true);
     try {
-      const stored = localStorage.getItem('iptv-credentials');
-      logger.debug('pages.settings.test_connection.localStorage', { hasValue: !!stored });
-      
-      if (!stored) {
-        toast.error('Nenhuma credencial salva!');
-        return;
-      }
-
-      const data = JSON.parse(stored);
-      const creds = data?.state?.credentials;
-      
+      const creds = credentials;
       if (!creds?.username || !creds?.password || !creds?.apiUrl) {
         toast.error('Credenciais incompletas!');
         return;
@@ -93,10 +93,20 @@ export default function Settings() {
   };
 
   const handleClearCredentials = () => {
-    clearCredentials();
-    setFormData({ username: '', password: '', apiUrl: '', m3uUrl: '' });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+    (async () => {
+      try {
+        clearCredentials();
+        if (iptvCredentialsDb.isEnabled()) {
+          await iptvCredentialsDb.clearMyCredentials();
+        }
+        setFormData({ username: '', password: '', apiUrl: '', m3uUrl: '' });
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      } catch (error) {
+        logger.error('pages.settings.clear_credentials_failed', undefined, error);
+        toast.error('Falha ao limpar credenciais');
+      }
+    })();
   };
 
   const handleRefreshContent = async () => {

@@ -1,29 +1,4 @@
-let clientPromise = null;
-
-const getSupabaseEnv = () => {
-  const url = String(import.meta.env.VITE_SUPABASE_URL || '').trim();
-  const anonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
-  return { url, anonKey, enabled: Boolean(url && anonKey) };
-};
-
-const getClient = async () => {
-  const { url, anonKey, enabled } = getSupabaseEnv();
-  if (!enabled) return null;
-
-  if (!clientPromise) {
-    clientPromise = import('@supabase/supabase-js').then(({ createClient }) =>
-      createClient(url, anonKey, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
-        },
-      })
-    );
-  }
-
-  return clientPromise;
-};
+import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient';
 
 const mapUser = (u) => {
   if (!u) return null;
@@ -44,10 +19,10 @@ const mapUser = (u) => {
 };
 
 export const supabaseAuth = {
-  isEnabled: () => getSupabaseEnv().enabled,
+  isEnabled: () => isSupabaseConfigured(),
 
   register: async ({ name, email, password }) => {
-    const supabase = await getClient();
+    const supabase = await getSupabaseClient();
     if (!supabase) throw new Error('Supabase não configurado');
 
     const { data, error } = await supabase.auth.signUp({
@@ -73,7 +48,7 @@ export const supabaseAuth = {
   },
 
   login: async ({ email, password }) => {
-    const supabase = await getClient();
+    const supabase = await getSupabaseClient();
     if (!supabase) throw new Error('Supabase não configurado');
 
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -91,7 +66,7 @@ export const supabaseAuth = {
   },
 
   logout: async () => {
-    const supabase = await getClient();
+    const supabase = await getSupabaseClient();
     if (!supabase) return { success: true };
 
     const { error } = await supabase.auth.signOut();
@@ -100,7 +75,7 @@ export const supabaseAuth = {
   },
 
   getMe: async () => {
-    const supabase = await getClient();
+    const supabase = await getSupabaseClient();
     if (!supabase) throw new Error('Supabase não configurado');
 
     const { data, error } = await supabase.auth.getUser();
@@ -110,7 +85,7 @@ export const supabaseAuth = {
   },
 
   updateProfile: async ({ name }) => {
-    const supabase = await getClient();
+    const supabase = await getSupabaseClient();
     if (!supabase) throw new Error('Supabase não configurado');
 
     const { data, error } = await supabase.auth.updateUser({

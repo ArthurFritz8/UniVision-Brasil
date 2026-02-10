@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { logger } from '@/utils/logger';
 import { localAuth } from './localAuth';
 import { supabaseAuth } from './supabaseAuth';
+import { getPersistScopeUserId } from './scopedStorage';
 import { 
   mockChannels, 
   mockMovies, 
@@ -30,7 +31,8 @@ const proxyImageUrl = (url) => {
 // Função para obter credenciais do localStorage
 const getIptvCredentials = () => {
   try {
-    const stored = localStorage.getItem('iptv-credentials');
+    const scopedKey = `univision:persist:${getPersistScopeUserId()}:iptv-credentials`;
+    const stored = localStorage.getItem(scopedKey) || localStorage.getItem('iptv-credentials');
     if (stored) {
       const data = JSON.parse(stored);
       return data?.state?.credentials || null;

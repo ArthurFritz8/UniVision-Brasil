@@ -5,6 +5,22 @@ import useFavoritesStore from './favoritesStore';
 import useAppStore from './appStore';
 import useIptvStore from './iptvStore';
 import { setPersistScopeUserId } from '@services/scopedStorage';
+import { iptvCredentialsDb } from '@services/iptvCredentialsDb';
+import { logger } from '@/utils/logger';
+
+const syncIptvCredentialsFromDb = async () => {
+  try {
+    if (!iptvCredentialsDb.isEnabled()) return;
+    const creds = await iptvCredentialsDb.getMyCredentials();
+    const hasUsable = Boolean(
+      creds?.username && creds?.password && (creds?.apiUrl || creds?.m3uUrl)
+    );
+    if (!hasUsable) return;
+    useIptvStore.getState().setCredentials(creds);
+  } catch (err) {
+    logger.debug('auth.sync_iptv_credentials_failed', { message: err?.message });
+  }
+};
 
 const isSupabaseConfigured = () => {
   try {
@@ -51,6 +67,8 @@ const useAuthStore = create(
           } catch {
             // ignore
           }
+
+          await syncIptvCredentialsFromDb();
           
           if (token) localStorage.setItem('token', token);
           else localStorage.removeItem('token');
@@ -91,6 +109,8 @@ const useAuthStore = create(
             } catch {
               // ignore
             }
+
+            await syncIptvCredentialsFromDb();
           }
           
           if (token) localStorage.setItem('token', token);
@@ -191,6 +211,8 @@ const useAuthStore = create(
           } catch {
             // ignore
           }
+
+          await syncIptvCredentialsFromDb();
 
           localStorage.setItem('user', JSON.stringify(user));
         } catch (error) {
