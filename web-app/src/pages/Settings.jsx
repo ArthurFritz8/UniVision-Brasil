@@ -1,5 +1,5 @@
 import { Moon, Sun, Wifi, Save, Trash2, TestTube } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import useAppStore from '@store/appStore';
 import useIptvStore from '@store/iptvStore';
 import toast from 'react-hot-toast';
@@ -22,9 +22,32 @@ export default function Settings() {
   } = useAppStore();
   const { credentials, setCredentials, clearCredentials } = useIptvStore();
   const [formData, setFormData] = useState({ username: '', password: '', apiUrl: '', m3uUrl: '' });
+  const [didEditCredentials, setDidEditCredentials] = useState(false);
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (didEditCredentials) return;
+
+    const hasSaved = Boolean(
+      credentials?.username &&
+        credentials?.password &&
+        (credentials?.apiUrl || credentials?.m3uUrl)
+    );
+
+    if (!hasSaved) {
+      setFormData({ username: '', password: '', apiUrl: '', m3uUrl: '' });
+      return;
+    }
+
+    setFormData({
+      username: credentials?.username || '',
+      password: credentials?.password || '',
+      apiUrl: credentials?.apiUrl || '',
+      m3uUrl: credentials?.m3uUrl || '',
+    });
+  }, [credentials?.username, credentials?.password, credentials?.apiUrl, credentials?.m3uUrl, didEditCredentials]);
 
   const handleSaveCredentials = async () => {
     try {
@@ -44,7 +67,7 @@ export default function Settings() {
   const handleTestConnection = async () => {
     setTesting(true);
     try {
-      const creds = credentials;
+      const creds = formData;
       if (!creds?.username || !creds?.password || !creds?.apiUrl) {
         toast.error('Credenciais incompletas!');
         return;
@@ -100,6 +123,7 @@ export default function Settings() {
           await iptvCredentialsDb.clearMyCredentials();
         }
         setFormData({ username: '', password: '', apiUrl: '', m3uUrl: '' });
+        setDidEditCredentials(false);
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
       } catch (error) {
@@ -146,6 +170,7 @@ export default function Settings() {
   };
 
   const handleInputChange = (field, value) => {
+    setDidEditCredentials(true);
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -207,12 +232,12 @@ export default function Settings() {
               
               <div>
                 <label className={`block text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>👤 Usuário</label>
-                <input type="text" placeholder="seu.email@exemplo.com" value={formData.username} onChange={(e) => handleInputChange('username', e.target.value)} className="input-field" />
+                <input type="text" name="iptv_username" autoComplete="off" placeholder="seu.usuario" value={formData.username} onChange={(e) => handleInputChange('username', e.target.value)} className="input-field" />
               </div>
 
               <div>
                 <label className={`block text-sm font-semibold mb-3 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>🔐 Senha</label>
-                <input type="password" placeholder="sua senha" value={formData.password} onChange={(e) => handleInputChange('password', e.target.value)} className="input-field" />
+                <input type="password" name="iptv_password" autoComplete="new-password" placeholder="sua senha" value={formData.password} onChange={(e) => handleInputChange('password', e.target.value)} className="input-field" />
               </div>
 
               <div className="md:col-span-2">
