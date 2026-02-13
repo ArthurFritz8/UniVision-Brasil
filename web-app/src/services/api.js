@@ -59,6 +59,7 @@ let m3uCache = {
   fetchedAt: 0,
   entries: [],
   byId: new Map(),
+  seriesById: new Map(),
   groupsByType: {
     live: [],
     vod: [],
@@ -212,6 +213,54 @@ const fetchTextWithTimeout = async (url, timeoutMs) => {
   }
 };
 
+const parseSeriesEpisodeFromTitle = (rawTitle) => {
+  const title = String(rawTitle || '').trim();
+  if (!title) return null;
+
+  // Examples we see in M3U:
+  // "Por Trás da Névoa [L] S02E04"
+  // "Some Show 1x02"
+  // "Show Name S1E9"
+  const cleaned = title
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\(\s*\d{3,4}p\s*\)/gi, ' ')
+    .replace(/\b(4k|fhd|uhd|hd|sd|h265|h264)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const m1 = cleaned.match(/\bS(\d{1,2})\s*E(\d{1,3})\b/i);
+  const m2 = cleaned.match(/\b(\d{1,2})\s*x\s*(\d{1,3})\b/i);
+  const match = m1 || m2;
+  if (!match) return null;
+
+  const seasonNumber = Number(match[1]);
+  const episodeNumber = Number(match[2]);
+  if (!Number.isFinite(seasonNumber) || !Number.isFinite(episodeNumber)) return null;
+
+  const baseName = cleaned
+    .replace(match[0], ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!baseName) return null;
+  return { seriesName: baseName, seasonNumber, episodeNumber };
+};
+
+const toEpisodesBySeason = (episodeItems) => {
+  const map = new Map();
+  for (const ep of episodeItems) {
+    const season = Number(ep.season_number);
+    if (!Number.isFinite(season) || season <= 0) continue;
+    if (!map.has(season)) map.set(season, []);
+    map.get(season).push(ep);
+  }
+  for (const [season, list] of map.entries()) {
+    list.sort((a, b) => Number(a.episode_number || 0) - Number(b.episode_number || 0));
+    map.set(season, list);
+  }
+  return map;
+};
+
 const loadM3uCache = async (opts = {}) => {
   const credentials = getIptvCredentials();
   const m3uUrl = String(credentials?.m3uUrl || '').trim();
@@ -229,7 +278,8 @@ const loadM3uCache = async (opts = {}) => {
 
   m3uLoadPromise = (async () => {
     const proxyUrl = `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(m3uUrl)}`;
-    const res = await fetchTextWithTimeout(proxyUrl, CLIENT_TIMEOUT_DEFAULT_MS);
+    // Some M3U playlists are huge; allow the heavy timeout here.
+    const res = await fetchTextWithTimeout(proxyUrl, CLIENT_TIMEOUT_HEAVY_MS);
     const body = typeof res?.text === 'string' ? res.text : '';
 
     if (!res?.ok) {
@@ -245,6 +295,61 @@ const loadM3uCache = async (opts = {}) => {
     const entries = parseM3u(stripBom(body));
     const byId = new Map();
     entries.forEach((e) => byId.set(String(e.id), e));
+
+    // Build a derived series index for M3U mode.
+    // Group individual episode entries into a single series item.
+    const seriesBuckets = new Map();
+    for (const e of entries) {
+      if (e.type !== 'series') continue;
+      const parsed = parseSeriesEpisodeFromTitle(e.title);
+      if (!parsed) continue;
+
+      const categoryId = slugify(e.groupTitle) || hashId(e.groupTitle || '');
+      const seriesKey = `${normalizeText(parsed.seriesName)}|${categoryId}`;
+      if (!seriesBuckets.has(seriesKey)) {
+        seriesBuckets.set(seriesKey, {
+          seriesName: parsed.seriesName,
+          groupTitle: e.groupTitle || null,
+          categoryId: categoryId || null,
+          poster: e.logo || null,
+          episodes: [],
+        });
+      }
+      const bucket = seriesBuckets.get(seriesKey);
+      if (!bucket.poster && e.logo) bucket.poster = e.logo;
+      bucket.episodes.push({
+        id: e.id,
+        season_number: parsed.seasonNumber,
+        episode_number: parsed.episodeNumber,
+        title: null,
+        plot: null,
+        streamUrl: e.url,
+      });
+    }
+
+    const seriesById = new Map();
+    for (const bucket of seriesBuckets.values()) {
+      const seriesId = hashId(`m3u-series|${bucket.categoryId || ''}|${bucket.seriesName}`);
+      const episodesBySeason = toEpisodesBySeason(bucket.episodes);
+      const seasons = Array.from(episodesBySeason.entries())
+        .map(([season, list]) => ({ season_number: Number(season), episode_count: list.length }))
+        .sort((a, b) => a.season_number - b.season_number);
+
+      seriesById.set(String(seriesId), {
+        _id: seriesId,
+        title: bucket.seriesName,
+        name: bucket.seriesName,
+        poster: bucket.poster ? proxyImageUrl(bucket.poster) : null,
+        backdrop: bucket.poster ? proxyImageUrl(bucket.poster) : null,
+        description: null,
+        type: 'series',
+        category: bucket.groupTitle,
+        m3u: {
+          episodesBySeason,
+          seasons,
+        },
+      });
+    }
 
     const groups = { live: new Map(), vod: new Map(), series: new Map() };
     for (const e of entries) {
@@ -262,6 +367,7 @@ const loadM3uCache = async (opts = {}) => {
       fetchedAt: now,
       entries,
       byId,
+      seriesById,
       groupsByType: {
         live: Array.from(groups.live.values()),
         vod: Array.from(groups.vod.values()),
@@ -871,6 +977,27 @@ export const contentAPI = {
         const q = normalizeText(params?.q);
         const category = String(params?.category || '').trim();
 
+        // Series: return grouped series items (not each episode).
+        if (requestedType === 'series') {
+          const seriesList = Array.from(cache?.seriesById?.values?.() || []);
+          let s = seriesList;
+          if (category && category !== 'all' && category !== '__m3u__') {
+            s = s.filter((it) => slugify(it.category) === category);
+          }
+          if (q) {
+            s = s.filter((it) => normalizeText(it.title).includes(q));
+          }
+          if (params?.limit && Number.isFinite(Number(params.limit))) {
+            s = s.slice(0, Number(params.limit));
+          }
+          return {
+            contents: s,
+            total: s.length,
+            page: 1,
+            limit: params?.limit ? Number(params.limit) : 20,
+          };
+        }
+
         let filtered = list.filter((e) => e.type === requestedType);
         if (category && category !== 'all' && category !== '__m3u__') {
           filtered = filtered.filter((e) => slugify(e.groupTitle) === category);
@@ -1102,6 +1229,21 @@ export const contentAPI = {
   
   // Series endpoints para temporadas e episódios
   getSeriesInfo: (params) => {
+    // M3U mode: derive seasons from the grouped series index.
+    {
+      const credentials = getIptvCredentials();
+      const hasXtream = Boolean(credentials?.apiUrl && credentials?.username && credentials?.password);
+      const hasM3u = Boolean(String(credentials?.m3uUrl || '').trim());
+      if (!hasXtream && hasM3u) {
+        const seriesId = params?.series_id;
+        return loadM3uCache().then((cache) => {
+          const s = cache?.seriesById?.get?.(String(seriesId));
+          const seasons = Array.isArray(s?.m3u?.seasons) ? s.m3u.seasons : [];
+          return { seasons, info: null, episodesBySeason: {} };
+        });
+      }
+    }
+
     return fetchWithMock(
       (client) => {
         const seriesId = params?.series_id;
@@ -1177,6 +1319,23 @@ export const contentAPI = {
   },
   
   getSeriesEpisodes: (params) => {
+    // M3U mode: return episodes from the grouped series index.
+    {
+      const credentials = getIptvCredentials();
+      const hasXtream = Boolean(credentials?.apiUrl && credentials?.username && credentials?.password);
+      const hasM3u = Boolean(String(credentials?.m3uUrl || '').trim());
+      if (!hasXtream && hasM3u) {
+        const seriesId = params?.series_id;
+        const seasonNumber = Number(params?.season_number ?? 1);
+        return loadM3uCache().then((cache) => {
+          const s = cache?.seriesById?.get?.(String(seriesId));
+          const map = s?.m3u?.episodesBySeason;
+          const list = map instanceof Map ? (map.get(seasonNumber) || []) : [];
+          return { episodes: list };
+        });
+      }
+    }
+
     const seriesId = params?.series_id;
     const seasonNumber = Number(params?.season_number ?? 1);
 
