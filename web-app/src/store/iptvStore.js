@@ -32,11 +32,13 @@ const useIptvStore = create(
 
       hasCredentials: () => {
         const store = useIptvStore.getState();
-        return !!(
+        const hasXtream = Boolean(
           store.credentials.username &&
-          store.credentials.password &&
-          (store.credentials.apiUrl || store.credentials.m3uUrl)
+            store.credentials.password &&
+            store.credentials.apiUrl
         );
+        const hasM3u = Boolean(String(store.credentials.m3uUrl || '').trim());
+        return hasXtream || hasM3u;
       },
     }),
     {

@@ -13,15 +13,15 @@ export default function MainLayout() {
   const credentials = useIptvStore((s) => s.credentials);
 
   useEffect(() => {
-    const hasCreds = Boolean(
-      credentials?.username &&
-      credentials?.password &&
-      (credentials?.apiUrl || credentials?.m3uUrl)
+    const hasXtream = Boolean(
+      credentials?.username && credentials?.password && credentials?.apiUrl
     );
+    const hasM3u = Boolean(String(credentials?.m3uUrl || '').trim());
+    const hasCreds = hasXtream || hasM3u;
 
     if (!hasCreds) return;
 
-    const warmKey = `${String(credentials?.apiUrl || '')}|${String(credentials?.username || '')}`;
+    const warmKey = `${String(credentials?.apiUrl || '')}|${String(credentials?.m3uUrl || '')}|${String(credentials?.username || '')}`;
     const prev = sessionStorage.getItem('univision:warmupKey');
     if (prev === warmKey) return;
     sessionStorage.setItem('univision:warmupKey', warmKey);

@@ -26,7 +26,8 @@ export default function Profile() {
   }, [user?.role]);
 
   const isIptvConfigured = Boolean(
-    credentials?.username && credentials?.password && (credentials?.apiUrl || credentials?.m3uUrl)
+    (credentials?.username && credentials?.password && credentials?.apiUrl) ||
+      String(credentials?.m3uUrl || '').trim()
   );
 
   const handleChange = (e) => {

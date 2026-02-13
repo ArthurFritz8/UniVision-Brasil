@@ -12,9 +12,9 @@ const syncIptvCredentialsFromDb = async () => {
   try {
     if (!iptvCredentialsDb.isEnabled()) return;
     const creds = await iptvCredentialsDb.getMyCredentials();
-    const hasUsable = Boolean(
-      creds?.username && creds?.password && (creds?.apiUrl || creds?.m3uUrl)
-    );
+    const hasXtream = Boolean(creds?.username && creds?.password && creds?.apiUrl);
+    const hasM3u = Boolean(String(creds?.m3uUrl || '').trim());
+    const hasUsable = hasXtream || hasM3u;
     if (!hasUsable) return;
     useIptvStore.getState().setCredentials(creds);
   } catch (err) {

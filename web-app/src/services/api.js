@@ -28,6 +28,182 @@ const proxyImageUrl = (url) => {
   return `${IPTV_PROXY_BASE_URL}/img?url=${encodeURIComponent(url)}`;
 };
 
+const normalizeText = (value) => {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const slugify = (value) => {
+  const t = normalizeText(value);
+  if (!t) return '';
+  return t.replace(/\s+/g, '-');
+};
+
+const hashId = (value) => {
+  const str = String(value || '');
+  let hash = 5381;
+  for (let i = 0; i < str.length; i += 1) {
+    hash = ((hash << 5) + hash) ^ str.charCodeAt(i);
+  }
+  // Unsigned 32-bit to base36
+  return (hash >>> 0).toString(36);
+};
+
+let m3uCache = {
+  url: null,
+  fetchedAt: 0,
+  entries: [],
+  byId: new Map(),
+  groupsByType: {
+    live: [],
+    vod: [],
+    series: [],
+  },
+};
+
+const parseM3uAttributes = (raw) => {
+  const out = {};
+  const src = String(raw || '').trim();
+  if (!src) return out;
+
+  const re = /([a-zA-Z0-9_:-]+)=("[^"]*"|'[^']*'|[^\s]+)/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const key = m[1];
+    let val = m[2];
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    out[key] = val;
+  }
+  return out;
+};
+
+const inferM3uEntryType = ({ groupTitle, title }) => {
+  const g = normalizeText(groupTitle);
+  const t = normalizeText(title);
+
+  const hasSeries = g.includes('series') || g.includes('serie') || g.includes('tv shows') || t.includes('s0') || t.includes('season');
+  if (hasSeries) return 'series';
+
+  const hasVod = g.includes('vod') || g.includes('movie') || g.includes('filme') || g.includes('filmes') || g.includes('movies');
+  if (hasVod) return 'vod';
+
+  return 'live';
+};
+
+const parseM3u = (text) => {
+  const lines = String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((l) => l.trim());
+
+  const entries = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line) continue;
+
+    if (line.startsWith('#EXTINF')) {
+      const info = line;
+
+      const commaIdx = info.indexOf(',');
+      const metaPart = commaIdx >= 0 ? info.slice(0, commaIdx) : info;
+      const titlePart = commaIdx >= 0 ? info.slice(commaIdx + 1).trim() : '';
+
+      const attrsRaw = metaPart.split(':').slice(1).join(':');
+      const attrs = parseM3uAttributes(attrsRaw);
+
+      let url = '';
+      // Next non-empty, non-comment line is the URL.
+      for (let j = i + 1; j < lines.length; j += 1) {
+        const candidate = lines[j];
+        if (!candidate) continue;
+        if (candidate.startsWith('#')) continue;
+        url = candidate;
+        i = j; // advance outer loop
+        break;
+      }
+
+      if (!url) continue;
+
+      const groupTitle = attrs['group-title'] || attrs.group || '';
+      const title = titlePart || attrs['tvg-name'] || attrs['tvg-id'] || url;
+      const logo = attrs['tvg-logo'] || attrs.logo || null;
+      const type = inferM3uEntryType({ groupTitle, title });
+
+      const id = hashId(`${type}|${groupTitle}|${title}|${url}`);
+      entries.push({ id, type, title, groupTitle, logo, url });
+    }
+  }
+  return entries;
+};
+
+const loadM3uCache = async (opts = {}) => {
+  const credentials = getIptvCredentials();
+  const m3uUrl = String(credentials?.m3uUrl || '').trim();
+  if (!m3uUrl) return null;
+
+  const ttlMs = Number(opts?.ttlMs ?? 5 * 60 * 1000);
+  const now = Date.now();
+  const sameUrl = m3uCache.url === m3uUrl;
+  const fresh = sameUrl && now - m3uCache.fetchedAt < ttlMs;
+  if (fresh && m3uCache.entries.length) return m3uCache;
+
+  const proxyUrl = `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(m3uUrl)}`;
+  const res = await axios.get(proxyUrl, {
+    timeout: CLIENT_TIMEOUT_DEFAULT_MS,
+    responseType: 'text',
+    headers: { 'Content-Type': 'text/plain' },
+  });
+
+  const body = typeof res?.data === 'string' ? res.data : '';
+  if (!body || !body.trim().startsWith('#EXTM3U')) {
+    throw new Error('Lista M3U inválida');
+  }
+
+  const entries = parseM3u(body);
+  const byId = new Map();
+  entries.forEach((e) => byId.set(String(e.id), e));
+
+  const groups = { live: new Map(), vod: new Map(), series: new Map() };
+  for (const e of entries) {
+    const gt = String(e.groupTitle || '').trim();
+    const type = e.type;
+    if (!gt) continue;
+    const id = slugify(gt) || hashId(gt);
+    if (!groups[type].has(id)) {
+      groups[type].set(id, { _id: id, name: gt, type: type === 'vod' ? 'vod' : type });
+    }
+  }
+
+  m3uCache = {
+    url: m3uUrl,
+    fetchedAt: now,
+    entries,
+    byId,
+    groupsByType: {
+      live: Array.from(groups.live.values()),
+      vod: Array.from(groups.vod.values()),
+      series: Array.from(groups.series.values()),
+    },
+  };
+
+  logger.debug('m3u.cache.loaded', {
+    entries: entries.length,
+    liveGroups: m3uCache.groupsByType.live.length,
+    vodGroups: m3uCache.groupsByType.vod.length,
+    seriesGroups: m3uCache.groupsByType.series.length,
+  });
+
+  return m3uCache;
+};
+
 // Função para obter credenciais do localStorage
 const getIptvCredentials = () => {
   try {
@@ -410,7 +586,44 @@ export const authAPI = {
 
 // Channels endpoints com fallback mock
 export const channelsAPI = {
-  getAll: (params) => fetchWithMock(
+  getAll: (params) => {
+    const credentials = getIptvCredentials();
+    const hasXtream = Boolean(credentials?.apiUrl && credentials?.username && credentials?.password);
+    const hasM3u = Boolean(String(credentials?.m3uUrl || '').trim());
+
+    if (!hasXtream && hasM3u) {
+      return loadM3uCache().then((cache) => {
+        const list = Array.isArray(cache?.entries) ? cache.entries : [];
+        const q = normalizeText(params?.q);
+        const category = String(params?.category || '').trim();
+
+        let filtered = list.filter((e) => e.type === 'live');
+        if (category && category !== 'all' && category !== '__m3u__') {
+          filtered = filtered.filter((e) => slugify(e.groupTitle) === category);
+        }
+        if (q) {
+          filtered = filtered.filter((e) => normalizeText(e.title).includes(q));
+        }
+
+        if (params?.limit && Number.isFinite(Number(params.limit))) {
+          filtered = filtered.slice(0, Number(params.limit));
+        }
+
+        const channels = filtered.map((e) => ({
+          _id: e.id,
+          title: e.title,
+          name: e.title,
+          logo: proxyImageUrl(e.logo),
+          streamUrl: e.url,
+          category: e.groupTitle || null,
+          isLive: true,
+        }));
+
+        return { channels, total: channels.length, page: 1, limit: params?.limit ? Number(params.limit) : 20 };
+      });
+    }
+
+    return fetchWithMock(
     (client) => {
       const clientParams = { action: 'get_live_streams' };
       if (params?.category) {
@@ -472,8 +685,30 @@ export const channelsAPI = {
       });
     },
     { channels: mockChannels, total: mockChannels.length, page: 1, limit: 20 }
-  ),
-  getById: (id) => fetchWithMock(
+    );
+  },
+  getById: (id) => {
+    const credentials = getIptvCredentials();
+    const hasXtream = Boolean(credentials?.apiUrl && credentials?.username && credentials?.password);
+    const hasM3u = Boolean(String(credentials?.m3uUrl || '').trim());
+
+    if (!hasXtream && hasM3u) {
+      return loadM3uCache().then((cache) => {
+        const e = cache?.byId?.get(String(id));
+        if (!e) return { channel: null };
+        return {
+          channel: {
+            _id: e.id,
+            title: e.title,
+            name: e.title,
+            logo: proxyImageUrl(e.logo),
+            streamUrl: e.url,
+          },
+        };
+      });
+    }
+
+    return fetchWithMock(
     (client) => client.get('', { 
       params: { action: 'get_live_info', stream_id: id } 
     }).then(res => {
@@ -503,8 +738,9 @@ export const channelsAPI = {
         }
       };
     }),
-    { channel: mockChannels.find(c => c._id === id) }
-  ),
+      { channel: mockChannels.find(c => c._id === id) }
+    );
+  },
   getFeatured: () => fetchWithMock(
     (client) => client.get('', { 
       params: { action: 'get_live_streams' } 
@@ -541,7 +777,54 @@ export const channelsAPI = {
 
 // Content endpoints com fallback mock
 export const contentAPI = {
-  getAll: (params) => fetchWithMock(
+  getAll: (params) => {
+    const credentials = getIptvCredentials();
+    const hasXtream = Boolean(credentials?.apiUrl && credentials?.username && credentials?.password);
+    const hasM3u = Boolean(String(credentials?.m3uUrl || '').trim());
+
+    if (!hasXtream && hasM3u) {
+      return loadM3uCache().then((cache) => {
+        const list = Array.isArray(cache?.entries) ? cache.entries : [];
+        const requestedType = params?.type === 'series' ? 'series' : 'vod';
+        const q = normalizeText(params?.q);
+        const category = String(params?.category || '').trim();
+
+        let filtered = list.filter((e) => e.type === requestedType);
+        if (category && category !== 'all' && category !== '__m3u__') {
+          filtered = filtered.filter((e) => slugify(e.groupTitle) === category);
+        }
+        if (q) {
+          filtered = filtered.filter((e) => normalizeText(e.title).includes(q));
+        }
+
+        if (params?.limit && Number.isFinite(Number(params.limit))) {
+          filtered = filtered.slice(0, Number(params.limit));
+        }
+
+        const contents = filtered.map((e) => ({
+          _id: e.id,
+          title: e.title,
+          name: e.title,
+          poster: proxyImageUrl(e.logo),
+          backdrop: proxyImageUrl(e.logo),
+          description: null,
+          year: null,
+          rating: 0,
+          type: params?.type || 'movie',
+          category: e.groupTitle || null,
+          streamUrl: e.url,
+        }));
+
+        return {
+          contents,
+          total: contents.length,
+          page: 1,
+          limit: params?.limit ? Number(params.limit) : 20,
+        };
+      });
+    }
+
+    return fetchWithMock(
     (client) => {
       const action = params?.type === 'series' 
         ? 'get_series' 
@@ -644,8 +927,33 @@ export const contentAPI = {
       page: 1,
       limit: 20
     }
-  ),
-  getById: (id) => fetchWithMock(
+    );
+  },
+  getById: (id) => {
+    const credentials = getIptvCredentials();
+    const hasXtream = Boolean(credentials?.apiUrl && credentials?.username && credentials?.password);
+    const hasM3u = Boolean(String(credentials?.m3uUrl || '').trim());
+
+    if (!hasXtream && hasM3u) {
+      return loadM3uCache().then((cache) => {
+        const e = cache?.byId?.get(String(id));
+        if (!e) return { content: null };
+        return {
+          content: {
+            _id: e.id,
+            title: e.title,
+            poster: proxyImageUrl(e.logo),
+            description: null,
+            year: null,
+            rating: 0,
+            duration: null,
+            streamUrl: e.url,
+          },
+        };
+      });
+    }
+
+    return fetchWithMock(
     (client) => client.get('', { 
       params: { action: 'get_vod_info', vod_id: id } 
     }).then(res => {
@@ -703,8 +1011,9 @@ export const contentAPI = {
         }
       };
     }),
-    { content: [...mockMovies, ...mockSeries].find(c => c._id === id) }
-  ),
+      { content: [...mockMovies, ...mockSeries].find(c => c._id === id) }
+    );
+  },
   create: (data) => api.post('/content', data),
   update: (id, data) => api.put(`/content/${id}`, data),
   delete: (id) => api.delete(`/content/${id}`),
@@ -934,7 +1243,26 @@ const fetchWithMockSync = async (fetchFn, mockFn) => {
 
 // Categories endpoints com fallback mock
 export const categoriesAPI = {
-  getAll: (params) => fetchWithMock(
+  getAll: (params) => {
+    const credentials = getIptvCredentials();
+    const hasXtream = Boolean(credentials?.apiUrl && credentials?.username && credentials?.password);
+    const hasM3u = Boolean(String(credentials?.m3uUrl || '').trim());
+
+    if (!hasXtream && hasM3u) {
+      return loadM3uCache().then((cache) => {
+        const type = params?.type === 'series' ? 'series' : params?.type === 'live' ? 'live' : 'vod';
+        const list = Array.isArray(cache?.groupsByType?.[type]) ? cache.groupsByType[type] : [];
+
+        // Ensure at least one selectable category so pages can auto-pick a default.
+        const categories = list.length
+          ? list
+          : [{ _id: '__m3u__', name: 'Lista M3U', type: params?.type || 'vod' }];
+
+        return { categories, total: categories.length };
+      });
+    }
+
+    return fetchWithMock(
     (client) => {
       // Xtream Codes usa diferentes actions para categorias
       const action = params?.type === 'live' 
@@ -971,7 +1299,8 @@ export const categoriesAPI = {
       });
     },
     { categories: mockCategories, total: mockCategories.length }
-  ),
+    );
+  },
   getById: (id) => fetchWithMock(
     (client) => client.get('', { 
       params: { action: 'get_vod_categories' } 

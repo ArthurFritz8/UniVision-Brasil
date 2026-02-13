@@ -30,11 +30,9 @@ export default function Settings() {
   useEffect(() => {
     if (didEditCredentials) return;
 
-    const hasSaved = Boolean(
-      credentials?.username &&
-        credentials?.password &&
-        (credentials?.apiUrl || credentials?.m3uUrl)
-    );
+    const hasXtream = Boolean(credentials?.username && credentials?.password && credentials?.apiUrl);
+    const hasM3u = Boolean(String(credentials?.m3uUrl || '').trim());
+    const hasSaved = hasXtream || hasM3u;
 
     if (!hasSaved) {
       setFormData({ username: '', password: '', apiUrl: '', m3uUrl: '' });
@@ -68,8 +66,32 @@ export default function Settings() {
     setTesting(true);
     try {
       const creds = formData;
-      if (!creds?.username || !creds?.password || !creds?.apiUrl) {
+      const hasXtream = Boolean(creds?.username && creds?.password && creds?.apiUrl);
+      const hasM3u = Boolean(String(creds?.m3uUrl || '').trim());
+
+      if (!hasXtream && !hasM3u) {
         toast.error('Credenciais incompletas!');
+        return;
+      }
+
+      if (!hasXtream && hasM3u) {
+        const proxyUrl = `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(String(creds.m3uUrl).trim())}`;
+        logger.debug('pages.settings.test_m3u.request', { proxyUrl });
+        toast('Testando lista M3U...');
+
+        const response = await fetch(proxyUrl, { cache: 'no-store' });
+        if (!response.ok) {
+          toast.error(`Erro: ${response.status}`);
+          return;
+        }
+        const text = await response.text();
+        const ok = String(text || '').trimStart().startsWith('#EXTM3U');
+        const count = ok ? (String(text).match(/^#EXTINF:/gim) || []).length : 0;
+        if (!ok) {
+          toast.error('Lista M3U inválida');
+          return;
+        }
+        toast.success(`M3U OK! ${count} itens encontrados`);
         return;
       }
 
