@@ -224,9 +224,9 @@ export default function Player() {
         let kind = isHlsUrl ? 'hls' : (isTsUrl ? 'ts' : 'auto');
         let probe = null;
 
-        // Alguns provedores retornam HLS sem extensão (ex: .php, sem .m3u8).
-        // Para evitar usar o modo errado e disparar player.video.error, fazemos um probe rápido via proxy.
-        if (type === 'live' && kind === 'auto') {
+        // Alguns provedores retornam HLS/TS sem extensão (ex: .php, sem .m3u8/.ts).
+        // Para evitar usar o modo errado e ficar em tela preta, fazemos um probe rápido via proxy.
+        if (kind === 'auto') {
           probe = await probeStreamViaProxy({ originalUrl: url });
           if (probe?.kind === 'hls' || probe?.kind === 'ts') {
             kind = probe.kind;
@@ -316,6 +316,19 @@ export default function Player() {
             hls.loadSource(streamUrl);
             hls.attachMedia(video);
 
+            // Best-effort autoplay when stream is ready.
+            try {
+              hls.on(Hls.Events.MANIFEST_PARSED, async () => {
+                try {
+                  await video.play();
+                } catch {
+                  // Autoplay might be blocked; user can press play.
+                }
+              });
+            } catch {
+              // ignore
+            }
+
             hls.on(Hls.Events.ERROR, (_event, data) => {
               logger.error(
                 'player.hls.error',
@@ -353,7 +366,7 @@ export default function Player() {
             mpegtsPlayer = mpegts.createPlayer(
               {
                 type: 'mse',
-                isLive: true,
+                isLive: type === 'live',
                 url: streamUrl,
               },
               {
@@ -388,6 +401,14 @@ export default function Player() {
         })();
       } else {
         video.src = streamUrl;
+        // Try to start playback, but don't treat autoplay-block as fatal.
+        (async () => {
+          try {
+            await video.play();
+          } catch {
+            // ignore
+          }
+        })();
       }
     }
     
