@@ -144,6 +144,37 @@ const parseM3u = (text) => {
   return entries;
 };
 
+const stripBom = (text) => String(text || '').replace(/^\uFEFF/, '');
+
+const looksLikeM3u = (text) => {
+  const t = stripBom(text).trimStart();
+  if (!t) return false;
+  if (t.startsWith('#EXTM3U')) return true;
+  // Some providers omit the header but keep EXTINF entries.
+  return /(^|\n)#EXTINF:/i.test(t);
+};
+
+const fetchTextWithTimeout = async (url, timeoutMs) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1, Number(timeoutMs) || 1));
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      contentType: response.headers.get('content-type') || '',
+      text,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const loadM3uCache = async (opts = {}) => {
   const credentials = getIptvCredentials();
   const m3uUrl = String(credentials?.m3uUrl || '').trim();
@@ -156,18 +187,20 @@ const loadM3uCache = async (opts = {}) => {
   if (fresh && m3uCache.entries.length) return m3uCache;
 
   const proxyUrl = `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(m3uUrl)}`;
-  const res = await axios.get(proxyUrl, {
-    timeout: CLIENT_TIMEOUT_DEFAULT_MS,
-    responseType: 'text',
-    headers: { 'Content-Type': 'text/plain' },
-  });
+  const res = await fetchTextWithTimeout(proxyUrl, CLIENT_TIMEOUT_DEFAULT_MS);
+  const body = typeof res?.text === 'string' ? res.text : '';
 
-  const body = typeof res?.data === 'string' ? res.data : '';
-  if (!body || !body.trim().startsWith('#EXTM3U')) {
-    throw new Error('Lista M3U inválida');
+  if (!res?.ok) {
+    const sample = stripBom(body).trim().slice(0, 200);
+    throw new Error(`Falha ao baixar M3U (HTTP ${res?.status || 'erro'}). ${sample ? `Resposta: ${sample}` : ''}`.trim());
   }
 
-  const entries = parseM3u(body);
+  if (!looksLikeM3u(body)) {
+    const sample = stripBom(body).trim().slice(0, 200);
+    throw new Error(`Lista M3U inválida${res?.contentType ? ` (${res.contentType})` : ''}${sample ? `: ${sample}` : ''}`);
+  }
+
+  const entries = parseM3u(stripBom(body));
   const byId = new Map();
   entries.forEach((e) => byId.set(String(e.id), e));
 
