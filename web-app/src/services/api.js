@@ -66,6 +66,8 @@ let m3uCache = {
   },
 };
 
+let m3uLoadPromise = null;
+
 const parseM3uAttributes = (raw) => {
   const out = {};
   const src = String(raw || '').trim();
@@ -84,11 +86,46 @@ const parseM3uAttributes = (raw) => {
   return out;
 };
 
-const inferM3uEntryType = ({ groupTitle, title }) => {
+const detectTypeFromUrl = (url) => {
+  const raw = String(url || '').toLowerCase();
+  if (!raw) return null;
+  // Xtream-style paths: /live/ /movie/ /series/
+  if (/(^|\/)movie\//.test(raw)) return 'vod';
+  if (/(^|\/)series\//.test(raw)) return 'series';
+  if (/(^|\/)live\//.test(raw)) return 'live';
+
+  // Heuristic by extension
+  if (raw.includes('.mp4') || raw.includes('.mkv') || raw.includes('.avi')) return 'vod';
+  return null;
+};
+
+const groupLooksLikeLiveChannels = (groupTitle) => {
+  const g = normalizeText(groupTitle);
+  if (!g) return false;
+  // Common patterns: "Canais | [24H] Series" (still live channels)
+  if (g.startsWith('canais |')) return true;
+  if (g.startsWith('canais ')) return true;
+  if (g.includes('canais')) return true;
+  if (g.includes('channels')) return true;
+  if (g.includes('tv ao vivo') || g.includes('ao vivo') || g.includes('live tv')) return true;
+  return false;
+};
+
+const inferM3uEntryType = ({ groupTitle, title, url }) => {
+  const byUrl = detectTypeFromUrl(url);
+  if (byUrl) return byUrl;
+
+  if (groupLooksLikeLiveChannels(groupTitle)) return 'live';
+
   const g = normalizeText(groupTitle);
   const t = normalizeText(title);
 
-  const hasSeries = g.includes('series') || g.includes('serie') || g.includes('tv shows') || t.includes('s0') || t.includes('season');
+  // "Series" in group-title is ambiguous in M3U; avoid classifying as series when it's clearly channel buckets.
+  const hasSeries =
+    g.includes('tv shows') ||
+    ((g.includes('series') || g.includes('serie')) && !g.includes('canais') && !g.includes('channels')) ||
+    t.includes('s0') ||
+    t.includes('season');
   if (hasSeries) return 'series';
 
   const hasVod = g.includes('vod') || g.includes('movie') || g.includes('filme') || g.includes('filmes') || g.includes('movies');
@@ -135,7 +172,7 @@ const parseM3u = (text) => {
       const groupTitle = attrs['group-title'] || attrs.group || '';
       const title = titlePart || attrs['tvg-name'] || attrs['tvg-id'] || url;
       const logo = attrs['tvg-logo'] || attrs.logo || null;
-      const type = inferM3uEntryType({ groupTitle, title });
+      const type = inferM3uEntryType({ groupTitle, title, url });
 
       const id = hashId(`${type}|${groupTitle}|${title}|${url}`);
       entries.push({ id, type, title, groupTitle, logo, url });
@@ -186,55 +223,67 @@ const loadM3uCache = async (opts = {}) => {
   const fresh = sameUrl && now - m3uCache.fetchedAt < ttlMs;
   if (fresh && m3uCache.entries.length) return m3uCache;
 
-  const proxyUrl = `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(m3uUrl)}`;
-  const res = await fetchTextWithTimeout(proxyUrl, CLIENT_TIMEOUT_DEFAULT_MS);
-  const body = typeof res?.text === 'string' ? res.text : '';
-
-  if (!res?.ok) {
-    const sample = stripBom(body).trim().slice(0, 200);
-    throw new Error(`Falha ao baixar M3U (HTTP ${res?.status || 'erro'}). ${sample ? `Resposta: ${sample}` : ''}`.trim());
+  if (m3uLoadPromise && sameUrl) {
+    return await m3uLoadPromise;
   }
 
-  if (!looksLikeM3u(body)) {
-    const sample = stripBom(body).trim().slice(0, 200);
-    throw new Error(`Lista M3U inválida${res?.contentType ? ` (${res.contentType})` : ''}${sample ? `: ${sample}` : ''}`);
-  }
+  m3uLoadPromise = (async () => {
+    const proxyUrl = `${IPTV_PROXY_BASE_URL}/stream?url=${encodeURIComponent(m3uUrl)}`;
+    const res = await fetchTextWithTimeout(proxyUrl, CLIENT_TIMEOUT_DEFAULT_MS);
+    const body = typeof res?.text === 'string' ? res.text : '';
 
-  const entries = parseM3u(stripBom(body));
-  const byId = new Map();
-  entries.forEach((e) => byId.set(String(e.id), e));
-
-  const groups = { live: new Map(), vod: new Map(), series: new Map() };
-  for (const e of entries) {
-    const gt = String(e.groupTitle || '').trim();
-    const type = e.type;
-    if (!gt) continue;
-    const id = slugify(gt) || hashId(gt);
-    if (!groups[type].has(id)) {
-      groups[type].set(id, { _id: id, name: gt, type: type === 'vod' ? 'vod' : type });
+    if (!res?.ok) {
+      const sample = stripBom(body).trim().slice(0, 200);
+      throw new Error(`Falha ao baixar M3U (HTTP ${res?.status || 'erro'}). ${sample ? `Resposta: ${sample}` : ''}`.trim());
     }
+
+    if (!looksLikeM3u(body)) {
+      const sample = stripBom(body).trim().slice(0, 200);
+      throw new Error(`Lista M3U inválida${res?.contentType ? ` (${res.contentType})` : ''}${sample ? `: ${sample}` : ''}`);
+    }
+
+    const entries = parseM3u(stripBom(body));
+    const byId = new Map();
+    entries.forEach((e) => byId.set(String(e.id), e));
+
+    const groups = { live: new Map(), vod: new Map(), series: new Map() };
+    for (const e of entries) {
+      const gt = String(e.groupTitle || '').trim();
+      const type = e.type;
+      if (!gt) continue;
+      const id = slugify(gt) || hashId(gt);
+      if (!groups[type].has(id)) {
+        groups[type].set(id, { _id: id, name: gt, type: type === 'vod' ? 'vod' : type });
+      }
+    }
+
+    m3uCache = {
+      url: m3uUrl,
+      fetchedAt: now,
+      entries,
+      byId,
+      groupsByType: {
+        live: Array.from(groups.live.values()),
+        vod: Array.from(groups.vod.values()),
+        series: Array.from(groups.series.values()),
+      },
+    };
+
+    logger.debug('m3u.cache.loaded', {
+      entries: entries.length,
+      liveGroups: m3uCache.groupsByType.live.length,
+      vodGroups: m3uCache.groupsByType.vod.length,
+      seriesGroups: m3uCache.groupsByType.series.length,
+    });
+
+    return m3uCache;
+  })();
+
+  try {
+    return await m3uLoadPromise;
+  } finally {
+    m3uLoadPromise = null;
   }
-
-  m3uCache = {
-    url: m3uUrl,
-    fetchedAt: now,
-    entries,
-    byId,
-    groupsByType: {
-      live: Array.from(groups.live.values()),
-      vod: Array.from(groups.vod.values()),
-      series: Array.from(groups.series.values()),
-    },
-  };
-
-  logger.debug('m3u.cache.loaded', {
-    entries: entries.length,
-    liveGroups: m3uCache.groupsByType.live.length,
-    vodGroups: m3uCache.groupsByType.vod.length,
-    seriesGroups: m3uCache.groupsByType.series.length,
-  });
-
-  return m3uCache;
 };
 
 // Função para obter credenciais do localStorage
